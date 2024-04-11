@@ -1,27 +1,69 @@
 require("dotenv").config();
 
 const fs = require("fs");
-const TelegramBot = require("node-telegram-bot-api");
 const ytdl = require("ytdl-core");
+const { Bot, InputFile, webhookCallback } = require("grammy");
+const express = require("express");
 
-const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
+const bot = new Bot(process.env.TELEGRAM_TOKEN);
 
-bot.onText(/\/download (.+)/, async (msg, match) => {
-  const chatId = msg.chat.id;
-  const videoUrl = match[1];
+async function downloadVideo(url) {
+  return new Promise((resolve, reject) => {
+    const videoStream = ytdl(url);
 
-  try {
-    bot.sendMessage(chatId, "Downloading...");
+    const fileStream = fs.createWriteStream("video.mp4");
 
-    const video = ytdl(videoUrl);
+    videoStream.pipe(fileStream);
 
-    video.pipe(fs.createWriteStream("dist/video.mp4"));
+    fileStream.on("error", (err) => reject(err));
+    videoStream.on("error", (err) => reject(err));
 
-    video.on("end", () => {
-      bot.sendVideo(chatId, "dist/video.mp4");
-    });
-  } catch (error) {
-    console.error(error);
-    bot.sendMessage(chatId, "Oops! Something went wrong.");
+    videoStream.on("end", () => resolve());
+  });
+}
+
+bot.command("start", async (ctx) => {
+  const message = [
+    "Hello! I'm a youtube video downloader bot.",
+    "<b>Commands</b>",
+    "/download [url] - download video form youtube [url]",
+  ].join("\n");
+
+  await ctx.reply(message, {
+    parse_mode: "HTML",
+  });
+});
+
+bot.command("download", async (ctx) => {
+  const url = ctx.message.text.split(" ")[1];
+
+  if (url) {
+    await ctx.reply(`Downloading: ${url}`);
+
+    try {
+      await downloadVideo(url);
+
+      await ctx.replyWithVideo(new InputFile("video.mp4"));
+    } catch (error) {
+      await ctx.reply(`Oops! Something went wrong. (${error.message})`);
+    }
+  } else {
+    await ctx.reply("No url provided.");
   }
 });
+
+// Start the server
+if (process.env.NODE_ENV === "production") {
+  // Use Webhooks for the production server
+  const app = express();
+  app.use(express.json());
+  app.use(webhookCallback(bot, "express"));
+
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => {
+    console.log(`Bot listening on port ${PORT}`);
+  });
+} else {
+  // Use Long Polling for development
+  bot.start();
+}
