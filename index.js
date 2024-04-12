@@ -8,9 +8,8 @@ const bot = new Bot(process.env.TELEGRAM_TOKEN);
 
 bot.command("start", async (ctx) => {
   const message = [
-    "Hello! I'm a youtube video downloader bot.",
-    "<b>Commands</b>",
-    "/download [url] - download video form youtube [url]",
+    "Hello! I'm a YouTube video downloader bot.",
+    "To download a video from YouTube, send me the URL of the video."
   ].join("\n");
 
   await ctx.reply(message, {
@@ -18,8 +17,8 @@ bot.command("start", async (ctx) => {
   });
 });
 
-bot.command("download", async (ctx) => {
-  const url = ctx.message.text.split(" ")[1];
+bot.on("message", async (ctx) => {
+  const url = ctx.message.text.trim();
 
   if (url) {
     try {
