@@ -9,7 +9,7 @@ const bot = new Bot(process.env.TELEGRAM_TOKEN);
 bot.command("start", async (ctx) => {
   const message = [
     "Hello! I'm a YouTube video downloader bot.",
-    "To download a video from YouTube, send me the URL of the video."
+    "To download a video from YouTube, send me the URL of the video.",
   ].join("\n");
 
   await ctx.reply(message, {
@@ -25,7 +25,9 @@ bot.on("message", async (ctx) => {
       await ctx.reply("Downloading…");
 
       const videoInfo = await ytdl.getInfo(url);
-      const videoStream = ytdl.downloadFromInfo(videoInfo, { quality: 'lowest' });
+      const videoStream = ytdl.downloadFromInfo(videoInfo, {
+        quality: "lowest",
+      });
 
       await ctx.replyWithVideo(new InputFile(videoStream), {
         caption: "Successfully downloaded video!",
