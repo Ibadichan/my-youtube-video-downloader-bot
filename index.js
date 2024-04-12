@@ -28,7 +28,7 @@ bot.command("download", async (ctx) => {
       const videoInfo = await ytdl.getInfo(url);
       const videoStream = ytdl.downloadFromInfo(videoInfo);
 
-      await ctx.replyWithVideo(new InputFile(videoStream), {
+      await ctx.replyWithDocument(new InputFile(videoStream), {
         caption: "Successfully downloaded video!",
       });
     } catch (error) {
