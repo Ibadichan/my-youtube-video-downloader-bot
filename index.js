@@ -22,7 +22,7 @@ bot.on("message", async (ctx) => {
 
   if (url) {
     try {
-      await ctx.reply(`Downloading: ${url}`);
+      await ctx.reply("Downloading…");
 
       const videoInfo = await ytdl.getInfo(url);
       const videoStream = ytdl.downloadFromInfo(videoInfo, { quality: 'lowest' });
