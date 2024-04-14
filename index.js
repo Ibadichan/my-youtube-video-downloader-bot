@@ -21,18 +21,26 @@ bot.on("message", async (ctx) => {
   const url = ctx.message.text.trim();
 
   if (url) {
+    let videoStream;
+
     try {
-      await ctx.reply("Downloading…");
+      await ctx.reply("Getting video metadata…");
 
       const videoInfo = await ytdl.getInfo(url);
-      const videoStream = ytdl.downloadFromInfo(videoInfo, {
+
+      await ctx.reply("Downloading video…");
+
+      videoStream = ytdl.downloadFromInfo(videoInfo, {
         quality: "lowest",
+        filter: "videoandaudio",
       });
 
-      await ctx.replyWithVideo(new InputFile(videoStream), {
-        caption: "Successfully downloaded video!",
-      });
+      await ctx.replyWithVideo(new InputFile(videoStream));
+
+      await ctx.reply("Successfully downloaded video!");
     } catch (error) {
+      if (videoStream) videoStream.destroy();
+
       console.error(error);
       await ctx.reply(`Oops! Something went wrong. (${error.message})`);
     }
