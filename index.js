@@ -4,7 +4,12 @@ const ytdl = require("ytdl-core");
 const { Bot, InputFile, webhookCallback } = require("grammy");
 const express = require("express");
 
-const bot = new Bot(process.env.TELEGRAM_TOKEN);
+const {
+  TELEGRAM_TOKEN,
+  TELEGRAM_WEBHOOK_URL,
+} = process.env;
+
+const bot = new Bot(TELEGRAM_TOKEN);
 
 bot.command("start", async (ctx) => {
   const message = [
@@ -49,6 +54,21 @@ bot.on("message", async (ctx) => {
   }
 });
 
+async function setupWebhook() {
+  try {
+    const res = await fetch(
+      `https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook?url=${TELEGRAM_WEBHOOK_URL}`
+    );
+    if (!res.ok) {
+      throw new Error("Network response was not ok");
+    }
+    const data = await response.json();
+    console.log("Telegram webhook", data);
+  } catch (err) {
+    console.error("An error occured while setting telegram webhook", err);
+  }
+}
+
 // Start the server
 if (process.env.NODE_ENV === "production") {
   // Use Webhooks for the production server
@@ -60,6 +80,8 @@ if (process.env.NODE_ENV === "production") {
   app.listen(PORT, () => {
     console.log(`Bot listening on port ${PORT}`);
   });
+
+  setupWebhook();
 } else {
   // Use Long Polling for development
   bot.start();
