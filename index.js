@@ -1,15 +1,19 @@
 require("dotenv").config();
 
 const ytdl = require("ytdl-core");
-const { Bot, InputFile, webhookCallback } = require("grammy");
+const { Bot, InlineKeyboard, InputFile, webhookCallback } = require("grammy");
 const express = require("express");
 
-const {
-  TELEGRAM_TOKEN,
-  TELEGRAM_WEBHOOK_URL,
-} = process.env;
+const { TELEGRAM_TOKEN, TELEGRAM_WEBHOOK_URL } = process.env;
 
 const bot = new Bot(TELEGRAM_TOKEN);
+
+const metadataMap = new Map();
+
+const inlineKeyboard = new InlineKeyboard()
+  .text("Audio only", "audioonly")
+  .text("Video only", "videoonly")
+  .text("Video and Audio", "videoandaudio");
 
 bot.command("start", async (ctx) => {
   const message = [
@@ -22,30 +26,58 @@ bot.command("start", async (ctx) => {
   });
 });
 
+bot.on("callback_query:data", async (ctx) => {
+  let mediaStream;
+
+  try {
+    const metadata = metadataMap.get(ctx.from.id);
+    const title = metadata.videoDetails.title;
+
+    metadataMap.delete(ctx.from.id);
+
+    const filter = ctx.callbackQuery.data;
+
+    await ctx.reply("Downloading…");
+
+    mediaStream = ytdl.downloadFromInfo(metadata, {
+      quality: "lowest",
+      filter,
+    });
+
+    if (filter === "audioonly") {
+      await ctx.replyWithAudio(new InputFile(mediaStream), {
+        title,
+      });
+    } else {
+      await ctx.replyWithVideo(new InputFile(mediaStream), {
+        title,
+      });
+    }
+
+    await ctx.reply("Successfully downloaded!");
+  } catch (error) {
+    if (mediaStream) mediaStream.destroy();
+
+    console.error(error);
+    await ctx.reply(`Oops! Something went wrong. (${error.message})`);
+  }
+});
+
 bot.on("message", async (ctx) => {
   const url = ctx.message.text.trim();
 
   if (url) {
-    let videoStream;
-
     try {
-      await ctx.reply("Getting video metadata…");
+      await ctx.reply("Getting metadata…");
 
-      const videoInfo = await ytdl.getInfo(url);
+      const metadata = await ytdl.getInfo(url);
 
-      await ctx.reply("Downloading video…");
+      metadataMap.set(ctx.from.id, metadata);
 
-      videoStream = ytdl.downloadFromInfo(videoInfo, {
-        quality: "lowest",
-        filter: "videoandaudio",
+      await ctx.reply("Please choose media type to download:", {
+        reply_markup: inlineKeyboard,
       });
-
-      await ctx.replyWithVideo(new InputFile(videoStream));
-
-      await ctx.reply("Successfully downloaded video!");
     } catch (error) {
-      if (videoStream) videoStream.destroy();
-
       console.error(error);
       await ctx.reply(`Oops! Something went wrong. (${error.message})`);
     }
