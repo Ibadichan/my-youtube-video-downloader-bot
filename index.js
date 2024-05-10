@@ -3,38 +3,74 @@ require("dotenv").config();
 const ytdl = require("ytdl-core");
 const { Bot, InlineKeyboard, InputFile, webhookCallback } = require("grammy");
 const express = require("express");
+const translations = require("./translations");
 
 const { TELEGRAM_TOKEN, TELEGRAM_WEBHOOK_URL } = process.env;
 
 const bot = new Bot(TELEGRAM_TOKEN);
 
 const metadataMap = new Map();
+const langMap = new Map();
+
+function getLang(userId) {
+  return langMap.get(userId) || "en";
+}
+
+async function selectLang(ctx) {
+  const inlineKeyboard = new InlineKeyboard()
+    .text(translations.en.language_select.value, "en")
+    .text(translations.ru.language_select.value, "ru");
+
+  const languageSelect = [
+    translations.en.language_select.label,
+    translations.ru.language_select.label,
+  ].join(" | ");
+
+  await ctx.reply(languageSelect, {
+    reply_markup: inlineKeyboard,
+  });
+}
 
 bot.command("start", async (ctx) => {
-  const message = [
-    "Hello! I'm a YouTube video downloader bot.",
-    "To download a video from YouTube, send me the URL of the video.",
-  ].join("\n");
+  const greeting = [translations.en.greeting, translations.ru.greeting].join(
+    "\n"
+  );
 
-  await ctx.reply(message);
+  await ctx.reply(greeting);
+
+  await selectLang(ctx);
+});
+
+bot.command("lang", async (ctx) => {
+  await selectLang(ctx);
 });
 
 bot.on("callback_query:data", async (ctx) => {
   await ctx.answerCallbackQuery();
 
+  const userId = ctx.from.id;
   const filter = ctx.callbackQuery.data;
 
-  if (filter === "download_all") {
-    const inlineKeyboard = new InlineKeyboard()
-      .text("Audio only", "audioonly")
-      .text("Video only", "videoonly")
-      .text("Video and Audio", "videoandaudio");
+  if (filter === "en") {
+    langMap.set(userId, "en");
+    await ctx.reply(translations.en.getting_started);
+  } else if (filter === "ru") {
+    langMap.set(userId, "ru");
+    await ctx.reply(translations.ru.getting_started);
+  } else if (filter === "download_all") {
+    const lang = getLang(userId);
 
-    await ctx.reply("Please choose media type to download:", {
+    const inlineKeyboard = new InlineKeyboard()
+      .text(translations[lang].media_select.options.audio, "audioonly")
+      .text(translations[lang].media_select.options.video, "videoonly")
+      .text(translations[lang].media_select.options.all, "videoandaudio");
+
+    await ctx.reply(translations[lang].media_select.label, {
       reply_markup: inlineKeyboard,
     });
   } else {
-    const userId = ctx.from.id;
+    const lang = getLang(userId);
+
     let metadataList = metadataMap.get(userId);
 
     const size = metadataList.length;
@@ -50,7 +86,9 @@ bot.on("callback_query:data", async (ctx) => {
         const title = metadata.videoDetails.title;
 
         await ctx.reply(
-          `Downloading… (${size - metadataList.indexOf(metadata)}/${size})`
+          `${translations[lang].status.downloading} (${
+            size - metadataList.indexOf(metadata)
+          }/${size})`
         );
 
         mediaStream = ytdl.downloadFromInfo(metadata, {
@@ -74,7 +112,9 @@ bot.on("callback_query:data", async (ctx) => {
 
         if (mediaStream) mediaStream.destroy();
 
-        await ctx.reply(`Oops! Something went wrong. (${error.message})`);
+        await ctx.reply(
+          `${translations[lang].status.error} (${error.message})`
+        );
       }
 
       metadataList.pop();
@@ -83,13 +123,17 @@ bot.on("callback_query:data", async (ctx) => {
     }
 
     await downloadMedia();
-    await ctx.reply(`Successfully downloaded! (${size - errorSize}/${size})`);
+
+    await ctx.reply(
+      `${translations[lang].status.success} (${size - errorSize}/${size})`
+    );
   }
 });
 
 bot.on("message", async (ctx) => {
   const userId = ctx.from.id;
   const url = ctx.message.text.trim();
+  const lang = getLang(userId);
 
   if (!metadataMap.has(userId)) {
     metadataMap.set(userId, []);
@@ -97,31 +141,31 @@ bot.on("message", async (ctx) => {
 
   if (url) {
     try {
-      await ctx.reply("Getting metadata…");
+      await ctx.reply(translations[lang].status.searching);
 
       const metadata = await ytdl.getInfo(url);
       const title = metadata.videoDetails.title;
 
       metadataMap.get(userId).push(metadata);
 
-      await ctx.reply(`Found video: "${title}"`);
+      await ctx.reply(`${translations[lang].status.found} "${title}"`);
     } catch (error) {
       console.error(error);
-      await ctx.reply(`Oops! Something went wrong. (${error.message})`);
+      await ctx.reply(`${translations[lang].status.error} (${error.message})`);
     }
   } else {
-    await ctx.reply("No url provided.");
+    await ctx.reply(translations[lang].status.errors.no_url);
   }
 
   const size = metadataMap.get(userId).length;
 
   if (size > 0) {
     const inlineKeyboard = new InlineKeyboard().text(
-      `Download all (${size})`,
+      `${translations[lang].manager.action} (${size})`,
       "download_all"
     );
 
-    await ctx.reply("Add another url or press 'Download all' button", {
+    await ctx.reply(translations[lang].manager.text, {
       reply_markup: inlineKeyboard,
     });
   }
