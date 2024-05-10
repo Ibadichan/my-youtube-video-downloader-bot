@@ -10,79 +10,120 @@ const bot = new Bot(TELEGRAM_TOKEN);
 
 const metadataMap = new Map();
 
-const inlineKeyboard = new InlineKeyboard()
-  .text("Audio only", "audioonly")
-  .text("Video only", "videoonly")
-  .text("Video and Audio", "videoandaudio");
-
 bot.command("start", async (ctx) => {
   const message = [
     "Hello! I'm a YouTube video downloader bot.",
     "To download a video from YouTube, send me the URL of the video.",
   ].join("\n");
 
-  await ctx.reply(message, {
-    parse_mode: "HTML",
-  });
+  await ctx.reply(message);
 });
 
 bot.on("callback_query:data", async (ctx) => {
-  let mediaStream;
+  await ctx.answerCallbackQuery();
 
-  try {
-    const metadata = metadataMap.get(ctx.from.id);
-    const title = metadata.videoDetails.title;
+  const filter = ctx.callbackQuery.data;
 
-    metadataMap.delete(ctx.from.id);
+  if (filter === "download_all") {
+    const inlineKeyboard = new InlineKeyboard()
+      .text("Audio only", "audioonly")
+      .text("Video only", "videoonly")
+      .text("Video and Audio", "videoandaudio");
 
-    const filter = ctx.callbackQuery.data;
-
-    await ctx.reply("Downloading…");
-
-    mediaStream = ytdl.downloadFromInfo(metadata, {
-      quality: "lowest",
-      filter,
+    await ctx.reply("Please choose media type to download:", {
+      reply_markup: inlineKeyboard,
     });
+  } else {
+    const userId = ctx.from.id;
+    let metadataList = metadataMap.get(userId);
 
-    if (filter === "audioonly") {
-      await ctx.replyWithAudio(new InputFile(mediaStream), {
-        title,
-      });
-    } else {
-      await ctx.replyWithVideo(new InputFile(mediaStream), {
-        title,
-      });
+    const size = metadataList.length;
+    let errorSize = 0;
+
+    async function downloadMedia() {
+      if (metadataList.length === 0) return;
+
+      let mediaStream;
+
+      try {
+        const metadata = metadataList[metadataList.length - 1];
+        const title = metadata.videoDetails.title;
+
+        await ctx.reply(
+          `Downloading… (${size - metadataList.indexOf(metadata)}/${size})`
+        );
+
+        mediaStream = ytdl.downloadFromInfo(metadata, {
+          quality: "lowest",
+          filter,
+        });
+
+        if (filter === "audioonly") {
+          await ctx.replyWithAudio(new InputFile(mediaStream), {
+            title,
+          });
+        } else {
+          await ctx.replyWithVideo(new InputFile(mediaStream), {
+            title,
+          });
+        }
+      } catch (error) {
+        errorSize += 1;
+
+        console.error(error);
+
+        if (mediaStream) mediaStream.destroy();
+
+        await ctx.reply(`Oops! Something went wrong. (${error.message})`);
+      }
+
+      metadataList.pop();
+
+      await downloadMedia();
     }
 
-    await ctx.reply("Successfully downloaded!");
-  } catch (error) {
-    if (mediaStream) mediaStream.destroy();
-
-    console.error(error);
-    await ctx.reply(`Oops! Something went wrong. (${error.message})`);
+    await downloadMedia();
+    await ctx.reply(`Successfully downloaded! (${size - errorSize}/${size})`);
   }
 });
 
 bot.on("message", async (ctx) => {
+  const userId = ctx.from.id;
   const url = ctx.message.text.trim();
+
+  if (!metadataMap.has(userId)) {
+    metadataMap.set(userId, []);
+  }
 
   if (url) {
     try {
       await ctx.reply("Getting metadata…");
 
       const metadata = await ytdl.getInfo(url);
+      const title = metadata.videoDetails.title;
 
-      metadataMap.set(ctx.from.id, metadata);
+      metadataMap.get(userId).push(metadata);
 
-      await ctx.reply("Please choose media type to download:", {
-        reply_markup: inlineKeyboard,
-      });
+      await ctx.reply(`Found video: "${title}"`);
     } catch (error) {
       console.error(error);
       await ctx.reply(`Oops! Something went wrong. (${error.message})`);
     }
   } else {
     await ctx.reply("No url provided.");
+  }
+
+  const size = metadataMap.get(userId).length;
+
+  if (size > 0) {
+    const inlineKeyboard = new InlineKeyboard().text(
+      `Download all (${size})`,
+      "download_all"
+    );
+
+    await ctx.reply("Add another url or press 'Download all' button", {
+      reply_markup: inlineKeyboard,
+    });
   }
 });
 
