@@ -179,7 +179,7 @@ async function setupWebhook() {
     if (!res.ok) {
       throw new Error("Network response was not ok");
     }
-    const data = await response.json();
+    const data = await res.json();
     console.log("Telegram webhook", data);
   } catch (err) {
     console.error("An error occured while setting telegram webhook", err);
