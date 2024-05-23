@@ -26,7 +26,7 @@ const translations = {
       options: {
         audio: "Audio",
         video: "Video",
-        all: "Video and audio",
+        all: "Video + audio",
       },
     },
   },
@@ -57,7 +57,7 @@ const translations = {
       options: {
         audio: "Аудио",
         video: "Видео",
-        all: "Видео и аудио",
+        all: "Видео + аудио",
       },
     },
   },
