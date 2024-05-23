@@ -61,9 +61,9 @@ bot.on("callback_query:data", async (ctx) => {
     const lang = getLang(userId);
 
     const inlineKeyboard = new InlineKeyboard()
-      .text(translations[lang].media_select.options.audio, "audioonly")
+      .text(translations[lang].media_select.options.all, "videoandaudio")
       .text(translations[lang].media_select.options.video, "videoonly")
-      .text(translations[lang].media_select.options.all, "videoandaudio");
+      .text(translations[lang].media_select.options.audio, "audioonly");
 
     await ctx.reply(translations[lang].media_select.label, {
       reply_markup: inlineKeyboard,
