@@ -15,6 +15,13 @@
     tough-cookie "^4.1.4"
     undici five
 
+"@distube/ytpl@^1.2.1":
+  version "1.2.1"
+  resolved "https://registry.yarnpkg.com/@distube/ytpl/-/ytpl-1.2.1.tgz#bb682c97c97cfd1dea2509956c420b553f34fd85"
+  integrity sha512-cp9nDYyGTZ2DNHURQXS76ptKWijLMspoxJEj03i++9tJf0LFGTWkskL3sLwcY4qQPLXjlH9FAXwwpjVttdXvZQ==
+  dependencies:
+    undici "^5.25.2"
+
 "@fastify/busboy@^2.0.0":
   version "2.1.1"
   resolved "https://registry.yarnpkg.com/@fastify/busboy/-/busboy-2.1.1.tgz#b9da6a878a371829a0502c9b6c1c143ef6663f4d"
@@ -627,7 +634,7 @@ type-is@~1.6.18:
     media-typer "0.3.0"
     mime-types "~2.1.24"
 
-undici@five:
+undici@^5.25.2, undici@five:
   version "5.28.4"
   resolved "https://registry.yarnpkg.com/undici/-/undici-5.28.4.tgz#6b280408edb6a1a604a9b20340f45b422e373068"
   integrity sha512-72RFADWFqKmUb2hmmvNODKL3p9hcB6Gt2DOQMis1SEBaV6a4MH8soBvzg+95CYhCKPFedut2JY9bMfrDl9D23g==

@@ -1,9 +1,11 @@
 require("dotenv").config();
 
+const ytpl = require("@distube/ytpl");
 const ytdl = require("@distube/ytdl-core");
 const { Bot, InlineKeyboard, InputFile, webhookCallback } = require("grammy");
 const express = require("express");
 const translations = require("./translations");
+const { isYouTubePlaylist } = require("./utils");
 
 const { TELEGRAM_TOKEN, TELEGRAM_WEBHOOK_URL } = process.env;
 
@@ -85,7 +87,7 @@ bot.on("callback_query:data", async (ctx) => {
         const metadata = metadataList[metadataList.length - 1];
         const title = metadata.videoDetails.title;
 
-        await ctx.reply(
+        const downloadingMsg = await ctx.reply(
           `${translations[lang].status.downloading} (${
             size - metadataList.indexOf(metadata)
           }/${size})`
@@ -105,6 +107,8 @@ bot.on("callback_query:data", async (ctx) => {
             title,
           });
         }
+
+        await ctx.api.deleteMessage(ctx.chat.id, downloadingMsg.message_id);
       } catch (error) {
         errorSize += 1;
 
@@ -143,12 +147,33 @@ bot.on("message", async (ctx) => {
     try {
       await ctx.reply(translations[lang].status.searching);
 
-      const metadata = await ytdl.getInfo(url);
-      const title = metadata.videoDetails.title;
+      const addVideoToQueue = async (url) => {
+        const metadata = await ytdl.getInfo(url);
 
-      metadataMap.get(userId).push(metadata);
+        metadataMap.get(userId).push(metadata);
 
-      await ctx.reply(`${translations[lang].status.found} "${title}"`);
+        return metadata;
+      };
+
+      if (isYouTubePlaylist(url)) {
+        const playlist = await ytpl(url);
+
+        await ctx.reply(
+          `${translations[lang].status.found} "${playlist.title}"`
+        );
+        await ctx.reply(`${translations[lang].status.downloading}`);
+
+        const mediaPull = playlist.items.map((item) =>
+          addVideoToQueue(item.shortUrl)
+        );
+
+        await Promise.all(mediaPull);
+      } else {
+        const metadata = await addVideoToQueue(url);
+
+        const title = metadata.videoDetails.title;
+        await ctx.reply(`${translations[lang].status.found} "${title}"`);
+      }
     } catch (error) {
       console.error(error);
       await ctx.reply(`${translations[lang].status.error} (${error.message})`);
