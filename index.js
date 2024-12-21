@@ -1,6 +1,6 @@
 require("dotenv").config();
 
-const ytdl = require("ytdl-core");
+const ytdl = require("@distube/ytdl-core");
 const { Bot, InlineKeyboard, InputFile, webhookCallback } = require("grammy");
 const express = require("express");
 const translations = require("./translations");
