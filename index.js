@@ -238,6 +238,10 @@ bot.on("message", async (ctx) => {
 
 async function setupWebhook() {
   try {
+    await fetch(
+      `https://api.telegram.org/bot${TELEGRAM_TOKEN}/deleteWebhook?drop_pending_updates=true`
+    );
+
     const res = await fetch(
       `https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook?url=${TELEGRAM_WEBHOOK_URL}`
     );
