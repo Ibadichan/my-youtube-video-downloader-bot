@@ -2,38 +2,166 @@ require("dotenv").config();
 
 const ytpl = require("@distube/ytpl");
 const ytdl = require("@distube/ytdl-core");
-const { Bot, InlineKeyboard, InputFile, webhookCallback } = require("grammy");
+const { Bot, InputFile, webhookCallback } = require("grammy");
+const { Menu } = require("@grammyjs/menu");
 const express = require("express");
 const translations = require("./translations");
 const { isYouTubePlaylist } = require("./utils");
 
+const metadataMap = new Map();
+const langMap = new Map();
+
 const { TELEGRAM_TOKEN, TELEGRAM_WEBHOOK_URL } = process.env;
 
 const bot = new Bot(TELEGRAM_TOKEN);
-
-const metadataMap = new Map();
-const langMap = new Map();
 
 function getLang(userId) {
   return langMap.get(userId) || "en";
 }
 
 async function selectLang(ctx) {
-  const inlineKeyboard = new InlineKeyboard()
-    .text(translations.en.language_select.value, "en")
-    .text(translations.ru.language_select.value, "ru");
-
   const languageSelect = [
     translations.en.language_select.label,
     translations.ru.language_select.label,
   ].join(" | ");
 
   await ctx.reply(languageSelect, {
-    reply_markup: inlineKeyboard,
+    reply_markup: selectLangMenu,
   });
 }
 
+async function processMedia(ctx, filter) {
+  const userId = ctx.from.id;
+
+  const lang = getLang(userId);
+
+  let metadataList = metadataMap.get(userId);
+
+  const size = metadataList.length;
+  let errorSize = 0;
+
+  async function downloadMedia() {
+    if (metadataList.length === 0) return;
+
+    let mediaStream;
+
+    try {
+      const metadata = metadataList[metadataList.length - 1];
+      const title = metadata.videoDetails.title;
+
+      const downloadingMsg = await ctx.reply(
+        `${translations[lang].status.downloading} (${
+          size - metadataList.indexOf(metadata)
+        }/${size})`
+      );
+
+      mediaStream = ytdl.downloadFromInfo(metadata, {
+        quality: "lowest",
+        filter,
+      });
+
+      if (filter === "audioonly") {
+        await ctx.replyWithAudio(new InputFile(mediaStream), {
+          title,
+        });
+      } else {
+        await ctx.replyWithVideo(new InputFile(mediaStream), {
+          title,
+        });
+      }
+
+      await ctx.api.deleteMessage(ctx.chat.id, downloadingMsg.message_id);
+    } catch (error) {
+      errorSize += 1;
+
+      console.error(error);
+
+      if (mediaStream) mediaStream.destroy();
+
+      await ctx.reply(`${translations[lang].status.error} (${error.message})`);
+    }
+
+    metadataList.pop();
+
+    await downloadMedia();
+  }
+
+  await downloadMedia();
+
+  await ctx.reply(
+    `${translations[lang].status.success} (${size - errorSize}/${size})`
+  );
+}
+
+const selectLangMenu = new Menu("select-lang-menu")
+  .text(translations.en.language_select.value, async (ctx) => {
+    const userId = ctx.from.id;
+    langMap.set(userId, "en");
+    await ctx.reply(translations.en.getting_started);
+  })
+  .text(translations.ru.language_select.value, async (ctx) => {
+    const userId = ctx.from.id;
+    langMap.set(userId, "ru");
+    await ctx.reply(translations.ru.getting_started);
+  });
+
+const selectMediaMenu = new Menu("select-media-menu")
+  .text(
+    async (ctx) => {
+      const userId = ctx.from.id;
+      const lang = getLang(userId);
+
+      return translations[lang].media_select.options.all;
+    },
+    async (ctx) => processMedia(ctx, "videoandaudio")
+  )
+  .text(
+    async (ctx) => {
+      const userId = ctx.from.id;
+      const lang = getLang(userId);
+
+      return translations[lang].media_select.options.video;
+    },
+    async (ctx) => processMedia(ctx, "videoonly")
+  )
+  .text(
+    async (ctx) => {
+      const userId = ctx.from.id;
+      const lang = getLang(userId);
+
+      return translations[lang].media_select.options.audio;
+    },
+    async (ctx) => processMedia(ctx, "audioonly")
+  );
+
+const downloadAllMenu = new Menu("download-all-menu").text(
+  async (ctx) => {
+    const userId = ctx.from.id;
+    const lang = getLang(userId);
+    const size = metadataMap.get(userId).length;
+
+    return `${translations[lang].manager.action} (${size})`;
+  },
+  async (ctx) => {
+    const userId = ctx.from.id;
+    const lang = getLang(userId);
+
+    await ctx.reply(translations[lang].media_select.label, {
+      reply_markup: selectMediaMenu,
+    });
+  }
+);
+
+bot.use(selectLangMenu);
+bot.use(selectMediaMenu);
+bot.use(downloadAllMenu);
+
 bot.command("start", async (ctx) => {
+  const userId = ctx.from.id;
+
+  langMap.delete(userId);
+  metadataMap.delete(userId);
+
   const greeting = [translations.en.greeting, translations.ru.greeting].join(
     "\n"
   );
@@ -45,93 +173,6 @@ bot.command("start", async (ctx) => {
 
 bot.command("lang", async (ctx) => {
   await selectLang(ctx);
-});
-
-bot.on("callback_query:data", async (ctx) => {
-  await ctx.answerCallbackQuery();
-
-  const userId = ctx.from.id;
-  const filter = ctx.callbackQuery.data;
-
-  if (filter === "en") {
-    langMap.set(userId, "en");
-    await ctx.reply(translations.en.getting_started);
-  } else if (filter === "ru") {
-    langMap.set(userId, "ru");
-    await ctx.reply(translations.ru.getting_started);
-  } else if (filter === "download_all") {
-    const lang = getLang(userId);
-
-    const inlineKeyboard = new InlineKeyboard()
-      .text(translations[lang].media_select.options.all, "videoandaudio")
-      .text(translations[lang].media_select.options.video, "videoonly")
-      .text(translations[lang].media_select.options.audio, "audioonly");
-
-    await ctx.reply(translations[lang].media_select.label, {
-      reply_markup: inlineKeyboard,
-    });
-  } else {
-    const lang = getLang(userId);
-
-    let metadataList = metadataMap.get(userId);
-
-    const size = metadataList.length;
-    let errorSize = 0;
-
-    async function downloadMedia() {
-      if (metadataList.length === 0) return;
-
-      let mediaStream;
-
-      try {
-        const metadata = metadataList[metadataList.length - 1];
-        const title = metadata.videoDetails.title;
-
-        const downloadingMsg = await ctx.reply(
-          `${translations[lang].status.downloading} (${
-            size - metadataList.indexOf(metadata)
-          }/${size})`
-        );
-
-        mediaStream = ytdl.downloadFromInfo(metadata, {
-          quality: "lowest",
-          filter,
-        });
-
-        if (filter === "audioonly") {
-          await ctx.replyWithAudio(new InputFile(mediaStream), {
-            title,
-          });
-        } else {
-          await ctx.replyWithVideo(new InputFile(mediaStream), {
-            title,
-          });
-        }
-
-        await ctx.api.deleteMessage(ctx.chat.id, downloadingMsg.message_id);
-      } catch (error) {
-        errorSize += 1;
-
-        console.error(error);
-
-        if (mediaStream) mediaStream.destroy();
-
-        await ctx.reply(
-          `${translations[lang].status.error} (${error.message})`
-        );
-      }
-
-      metadataList.pop();
-
-      await downloadMedia();
-    }
-
-    await downloadMedia();
-
-    await ctx.reply(
-      `${translations[lang].status.success} (${size - errorSize}/${size})`
-    );
-  }
 });
 
 bot.on("message", async (ctx) => {
@@ -185,13 +226,8 @@ bot.on("message", async (ctx) => {
   const size = metadataMap.get(userId).length;
 
   if (size > 0) {
-    const inlineKeyboard = new InlineKeyboard().text(
-      `${translations[lang].manager.action} (${size})`,
-      "download_all"
-    );
-
     await ctx.reply(translations[lang].manager.text, {
-      reply_markup: inlineKeyboard,
+      reply_markup: downloadAllMenu,
     });
   }
 });
