@@ -1,6 +1,6 @@
 {
   "name": "my-youtube-video-downloader-bot",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "main": "index.js",
   "repository": "git@github.com:Ibadichan/my-youtube-video-downloader-bot.git",
   "author": "Ivan Badicean <badican01117@gmail.com>",
