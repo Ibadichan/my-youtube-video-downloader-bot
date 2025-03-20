@@ -7,6 +7,9 @@ const { Menu } = require("@grammyjs/menu");
 const express = require("express");
 const translations = require("./translations");
 const { isYouTubePlaylist } = require("./utils");
+const cookies = require('./cookies');
+
+const agent = ytdl.createAgent(cookies);
 
 const metadataMap = new Map();
 const langMap = new Map();
@@ -58,6 +61,7 @@ async function processMedia(ctx, filter) {
       mediaStream = ytdl.downloadFromInfo(metadata, {
         quality: "lowest",
         filter,
+        agent,
       });
 
       if (filter === "audioonly") {
@@ -189,7 +193,7 @@ bot.on("message", async (ctx) => {
       await ctx.reply(translations[lang].status.searching);
 
       const addVideoToQueue = async (url) => {
-        const metadata = await ytdl.getInfo(url);
+        const metadata = await ytdl.getInfo(url, { agent });
 
         metadataMap.get(userId).push(metadata);
 
