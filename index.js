@@ -193,7 +193,10 @@ bot.on("message", async (ctx) => {
       await ctx.reply(translations[lang].status.searching);
 
       const addVideoToQueue = async (url) => {
-        const metadata = await ytdl.getInfo(url, { agent });
+        const metadata = await ytdl.getInfo(url, { 
+          agent,
+          playerClients: ["WEB"],
+        });
 
         metadataMap.get(userId).push(metadata);
 
