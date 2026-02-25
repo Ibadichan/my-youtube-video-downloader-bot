@@ -21,12 +21,11 @@ const translations = {
     errors: {
       no_url: "No url provided.",
     },
-    media_select: {
-      label: "Select media sources to download:",
+    quality_select: {
+      label: "Select quality:",
       options: {
-        audio: "Audio",
-        video: "Video",
-        all: "Video + audio",
+        best: "Best",
+        audio: "Audio only",
       },
     },
   },
@@ -52,15 +51,14 @@ const translations = {
     errors: {
       no_url: "URL-адрес не указан.",
     },
-    media_select: {
-      label: "Выберите медиа-ресурсы для скачивания:",
+    quality_select: {
+      label: "Выберите качество:",
       options: {
-        audio: "Аудио",
-        video: "Видео",
-        all: "Видео + аудио",
+        best: "Лучшее",
+        audio: "Только аудио",
       },
     },
   },
 };
 
-module.exports = translations;
+export default translations;
