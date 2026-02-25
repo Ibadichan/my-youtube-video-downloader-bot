@@ -25,6 +25,14 @@ Platform.shim.eval = (data, env) => {
 
 const { TELEGRAM_TOKEN, TELEGRAM_WEBHOOK_URL, YOUTUBE_COOKIE } = process.env;
 
+const WALLETS = {
+  BTC:        '1KgxUoCK87hPrLVDXYwpQzZqS6Mus7D6N8',
+  ETH:        '0xb0db7cb3c18a02c969416d4ec06bdd703d1756f8',
+  TON:        'UQBuvR1J5N6XOlA2tuQ0xMT1OgAp6XG0BAEuap3zNHhrb6ba',
+  USDT_TRC20: 'TQze9DixKds37maVgmnuVENnUDT7UynaRy',
+};
+
+
 const innertube = await Innertube.create({
   cookie: YOUTUBE_COOKIE,
   cache: new UniversalCache(false),
@@ -114,6 +122,7 @@ bot.use(selectLangMenu);
 
 bot.on('callback_query:data', async (ctx) => {
   const data = ctx.callbackQuery.data;
+
   if (!data.startsWith('dl:')) return;
 
   await ctx.answerCallbackQuery();
@@ -141,6 +150,41 @@ bot.command('start', async (ctx) => {
 
 bot.command('lang', async (ctx) => {
   await selectLang(ctx);
+});
+
+bot.command('donate', async (ctx) => {
+  const lang = getLang(ctx.from.id);
+  const t = translations[lang].donate;
+
+  const text = [
+    `<b>${t.label}</b>`,
+    '',
+    `₿ BTC (BTC):\n<code>${WALLETS.BTC}</code>`,
+    `⟠ ETH (ERC20):\n<code>${WALLETS.ETH}</code>`,
+    `ꘜ TON (TON):\n<code>${WALLETS.TON}</code>`,
+    `₮ USDT (TRC20):\n<code>${WALLETS.USDT_TRC20}</code>`,
+    '',
+    `<i>${t.copied}</i>`,
+    '',
+    `<i>${t.other_payments}</i>`,
+    `<a href="https://t.me/ibadichan">📬 @ibadichan</a>`,
+  ].join('\n');
+
+  await ctx.reply(text, { parse_mode: 'HTML' });
+});
+
+bot.command('support', async (ctx) => {
+  const lang = getLang(ctx.from.id);
+  const t = translations[lang].support;
+
+  const text = [
+    `<b>${t.label}</b>`,
+    '',
+    `📧 ${t.email}: <code>badican01117@gmail.com</code>`,
+    `📬 ${t.telegram}: <a href="https://t.me/ibadichan">t.me/ibadichan</a>`,
+  ].join('\n');
+
+  await ctx.reply(text, { parse_mode: 'HTML' });
 });
 
 bot.on('message', async (ctx) => {

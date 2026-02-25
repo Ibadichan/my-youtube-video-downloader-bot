@@ -24,6 +24,16 @@ const translations = {
         audio: "Audio only",
       },
     },
+    donate: {
+      label: "Support the bot ❤️",
+      copied: "Tap an address to copy it.",
+      other_payments: "Other payment methods — write me",
+    },
+    support: {
+      label: "Contact and Support",
+      email: "Email",
+      telegram: "Telegram",
+    },
   },
   ru: {
     greeting: "Привет! Я бот для скачивания YouTube видео/аудио.",
@@ -49,6 +59,16 @@ const translations = {
         best: "Лучшее",
         audio: "Только аудио",
       },
+    },
+    donate: {
+      label: "Поддержать бота ❤️",
+      copied: "Нажми на адрес, чтобы скопировать.",
+      other_payments: "Другие способы оплаты — напиши мне",
+    },
+    support: {
+      label: "Контакты и поддержка",
+      email: "Почта",
+      telegram: "Телеграм",
     },
   },
 };
