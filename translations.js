@@ -7,10 +7,6 @@ const translations = {
     },
     getting_started:
       "To download a video/audio from YouTube, send me the URL of the video.",
-    manager: {
-      text: "Send another url or press 'Download all' button",
-      action: "Download all",
-    },
     status: {
       searching: "Searching video…",
       found: "Found:",
@@ -37,10 +33,6 @@ const translations = {
     },
     getting_started:
       "Чтобы загрузить видео/аудио с YouTube, пришлите мне URL-адрес этого видео.",
-    manager: {
-      text: 'Добавьте еще видео или нажмите "Скачать все"',
-      action: "Скачать все",
-    },
     status: {
       searching: "Поиск видео…",
       found: "Найдено:",
