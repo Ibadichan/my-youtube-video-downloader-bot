@@ -6,7 +6,7 @@ const translations = {
       value: "🇬🇧 English",
     },
     getting_started:
-      "To download a video/audio from YouTube, send me the URL of the video.",
+      "To download a video/audio from YouTube, send me the URL of the video.\n\n❤️ /donate — support the project\n💬 /support — contact the developer",
     status: {
       searching: "Searching video…",
       found: "Found:",
@@ -42,7 +42,7 @@ const translations = {
       value: "🇷🇺 Русский",
     },
     getting_started:
-      "Чтобы загрузить видео/аудио с YouTube, пришлите мне URL-адрес этого видео.",
+      "Чтобы загрузить видео/аудио с YouTube, пришлите мне URL-адрес этого видео.\n\n❤️ /donate — поддержать проект\n💬 /support — связаться с разработчиком",
     status: {
       searching: "Поиск видео…",
       found: "Найдено:",

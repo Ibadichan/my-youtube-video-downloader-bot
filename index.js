@@ -41,6 +41,24 @@ const innertube = await Innertube.create({
 
 const pendingMap = new Map(); // Map<userId, { id: string, title: string }[]>
 const langMap = new Map();
+const downloadCountMap = new Map(); // Map<userId, number>
+
+function buildDonateText(lang) {
+  const t = translations[lang].donate;
+  return [
+    `<b>${t.label}</b>`,
+    '',
+    `₿ BTC (BTC):\n<code>${WALLETS.BTC}</code>`,
+    `⟠ ETH (ERC20):\n<code>${WALLETS.ETH}</code>`,
+    `ꘜ TON (TON):\n<code>${WALLETS.TON}</code>`,
+    `₮ USDT (TRC20):\n<code>${WALLETS.USDT_TRC20}</code>`,
+    '',
+    `<i>${t.copied}</i>`,
+    '',
+    `<i>${t.other_payments}</i>`,
+    `<a href="https://t.me/ibadichan">📬 @ibadichan</a>`,
+  ].join('\n');
+}
 
 const bot = new Bot(TELEGRAM_TOKEN);
 
@@ -96,6 +114,14 @@ async function processMedia(ctx, quality, type = 'video+audio') {
   }
 
   await ctx.reply(`${translations[lang].status.success} (${size - errorSize}/${size})`);
+
+  const prevCount = downloadCountMap.get(userId) ?? 0;
+  const newCount = prevCount + (size - errorSize);
+  downloadCountMap.set(userId, newCount);
+
+  if (Math.floor(newCount / 5) > Math.floor(prevCount / 5)) {
+    await ctx.reply(buildDonateText(lang), { parse_mode: 'HTML' });
+  }
 }
 
 function buildQualityKeyboard(lang, qualityLabels) {
@@ -154,23 +180,7 @@ bot.command('lang', async (ctx) => {
 
 bot.command('donate', async (ctx) => {
   const lang = getLang(ctx.from.id);
-  const t = translations[lang].donate;
-
-  const text = [
-    `<b>${t.label}</b>`,
-    '',
-    `₿ BTC (BTC):\n<code>${WALLETS.BTC}</code>`,
-    `⟠ ETH (ERC20):\n<code>${WALLETS.ETH}</code>`,
-    `ꘜ TON (TON):\n<code>${WALLETS.TON}</code>`,
-    `₮ USDT (TRC20):\n<code>${WALLETS.USDT_TRC20}</code>`,
-    '',
-    `<i>${t.copied}</i>`,
-    '',
-    `<i>${t.other_payments}</i>`,
-    `<a href="https://t.me/ibadichan">📬 @ibadichan</a>`,
-  ].join('\n');
-
-  await ctx.reply(text, { parse_mode: 'HTML' });
+  await ctx.reply(buildDonateText(lang), { parse_mode: 'HTML' });
 });
 
 bot.command('support', async (ctx) => {
