@@ -68,7 +68,14 @@ bot.catch((err) => console.error('Unhandled bot error:', err));
 async function processMedia(ctx, quality, type = 'video+audio', sourceMsg = null) {
   const userId = ctx.from.id;
   const lang = getLang(ctx);
-  const { videos: videoList, thumbnailUrl } = pendingMap.get(userId);
+  const entry = pendingMap.get(userId);
+
+  if (!entry) {
+    await ctx.reply(translations[lang].errors.session_expired);
+    return;
+  }
+
+  const { videos: videoList, thumbnailUrl } = entry;
   const size = videoList.length;
   let errorSize = 0;
   let infoMsg = null;
@@ -92,8 +99,6 @@ async function processMedia(ctx, quality, type = 'video+audio', sourceMsg = null
     }
   }
 
-  let lastDownloaded = null;
-
   while (videoList.length > 0) {
     const { id, title } = videoList.at(-1);
     let stream;
@@ -107,8 +112,6 @@ async function processMedia(ctx, quality, type = 'video+audio', sourceMsg = null
       } else {
         await ctx.replyWithVideo(new InputFile(Utils.streamToIterable(stream), 'video.mp4'), { title });
       }
-
-      lastDownloaded = { id, title };
     } catch (error) {
       errorSize += 1;
       console.error(error);
@@ -119,32 +122,11 @@ async function processMedia(ctx, quality, type = 'video+audio', sourceMsg = null
     videoList.pop();
   }
 
-  if (infoMsg && lastDownloaded) {
+  if (infoMsg) {
     try {
       await ctx.api.deleteMessage(infoMsg.chat.id, infoMsg.message_id);
     } catch (e) {
       console.error('Failed to delete loading message:', e);
-    }
-
-    const { id, title } = lastDownloaded;
-    const mediaEmoji = type === 'audio' ? '🎵' : '🎬';
-    const qualityLabel = type === 'audio'
-      ? translations[lang].quality_select.options.audio
-      : quality;
-    const doneCaption = [
-      `${mediaEmoji} <b>${title}</b>`,
-      `🔗 https://youtu.be/${id}`,
-      `📥 ${qualityLabel}`,
-    ].join('\n');
-
-    try {
-      if (thumbnailUrl) {
-        await ctx.replyWithPhoto(thumbnailUrl, { caption: doneCaption, parse_mode: 'HTML' });
-      } else {
-        await ctx.reply(doneCaption, { parse_mode: 'HTML', link_preview_options: { is_disabled: true } });
-      }
-    } catch (e) {
-      console.error('Failed to send done message:', e);
     }
   }
 
@@ -197,9 +179,9 @@ bot.on('callback_query:data', async (ctx) => {
   const sourceMsg = ctx.callbackQuery.message;
   const value = data.slice(3);
   if (value === 'audio') {
-    await processMedia(ctx, 'best', 'audio', sourceMsg);
+    processMedia(ctx, 'best', 'audio', sourceMsg).catch(console.error);
   } else {
-    await processMedia(ctx, value, 'video+audio', sourceMsg);
+    processMedia(ctx, value, 'video+audio', sourceMsg).catch(console.error);
   }
 });
 
