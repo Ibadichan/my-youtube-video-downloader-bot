@@ -1,8 +1,7 @@
 import 'dotenv/config';
 
-import { Innertube, Utils, Platform, UniversalCache } from 'youtubei.js';
+import { Innertube, Platform, UniversalCache, Utils } from 'youtubei.js';
 import { Bot, InputFile, InlineKeyboard, webhookCallback } from 'grammy';
-import { Menu } from '@grammyjs/menu';
 import express from 'express';
 import translations from './translations.js';
 import { isYouTubePlaylist, extractVideoId } from './utils.js';
@@ -32,16 +31,18 @@ const WALLETS = {
   USDT_TRC20: 'TQze9DixKds37maVgmnuVENnUDT7UynaRy',
 };
 
-
 const innertube = await Innertube.create({
   cookie: YOUTUBE_COOKIE,
   cache: new UniversalCache(false),
   generate_session_locally: true,
 });
 
-const pendingMap = new Map(); // Map<userId, { id: string, title: string }[]>
-const langMap = new Map();
+const pendingMap = new Map(); // Map<userId, { videos: { id, title }[], thumbnailUrl: string|null }>
 const downloadCountMap = new Map(); // Map<userId, number>
+
+function getLang(ctx) {
+  return ctx.from?.language_code === 'ru' ? 'ru' : 'en';
+}
 
 function buildDonateText(lang) {
   const t = translations[lang].donate;
@@ -62,47 +63,52 @@ function buildDonateText(lang) {
 
 const bot = new Bot(TELEGRAM_TOKEN);
 
-function getLang(userId) {
-  return langMap.get(userId) || 'en';
-}
+bot.catch((err) => console.error('Unhandled bot error:', err));
 
-async function selectLang(ctx) {
-  const languageSelect = [
-    translations.en.language_select.label,
-    translations.ru.language_select.label,
-  ].join(' | ');
-
-  await ctx.reply(languageSelect, {
-    reply_markup: selectLangMenu,
-  });
-}
-
-async function processMedia(ctx, quality, type = 'video+audio') {
+async function processMedia(ctx, quality, type = 'video+audio', sourceMsg = null) {
   const userId = ctx.from.id;
-  const lang = getLang(userId);
-  const videoList = pendingMap.get(userId);
+  const lang = getLang(ctx);
+  const { videos: videoList, thumbnailUrl } = pendingMap.get(userId);
   const size = videoList.length;
   let errorSize = 0;
+  let infoMsg = null;
+
+  if (sourceMsg) {
+    try {
+      await ctx.api.deleteMessage(sourceMsg.chat.id, sourceMsg.message_id);
+    } catch (e) {
+      console.error('Failed to delete source message:', e);
+    }
+
+    const loadingCaption = `⏳ ${translations[lang].status.downloading}`;
+    try {
+      if (thumbnailUrl) {
+        infoMsg = await ctx.replyWithPhoto(thumbnailUrl, { caption: loadingCaption });
+      } else {
+        infoMsg = await ctx.reply(loadingCaption);
+      }
+    } catch (e) {
+      console.error('Failed to send loading message:', e);
+    }
+  }
+
+  let lastDownloaded = null;
 
   while (videoList.length > 0) {
     const { id, title } = videoList.at(-1);
     let stream;
 
     try {
-      const downloadingMsg = await ctx.reply(
-        `${translations[lang].status.downloading} (${size - videoList.length + 1}/${size})`
-      );
-
       const client = type === 'audio' ? 'WEB_EMBEDDED' : 'WEB';
       stream = await innertube.download(id, { type, quality, client });
 
       if (type === 'audio') {
-        await ctx.replyWithAudio(new InputFile(Utils.streamToIterable(stream)), { title });
+        await ctx.replyWithAudio(new InputFile(Utils.streamToIterable(stream), 'audio.mp3'), { title });
       } else {
-        await ctx.replyWithVideo(new InputFile(Utils.streamToIterable(stream)), { title });
+        await ctx.replyWithVideo(new InputFile(Utils.streamToIterable(stream), 'video.mp4'), { title });
       }
 
-      await ctx.api.deleteMessage(ctx.chat.id, downloadingMsg.message_id);
+      lastDownloaded = { id, title };
     } catch (error) {
       errorSize += 1;
       console.error(error);
@@ -113,7 +119,34 @@ async function processMedia(ctx, quality, type = 'video+audio') {
     videoList.pop();
   }
 
-  await ctx.reply(`${translations[lang].status.success} (${size - errorSize}/${size})`);
+  if (infoMsg && lastDownloaded) {
+    try {
+      await ctx.api.deleteMessage(infoMsg.chat.id, infoMsg.message_id);
+    } catch (e) {
+      console.error('Failed to delete loading message:', e);
+    }
+
+    const { id, title } = lastDownloaded;
+    const mediaEmoji = type === 'audio' ? '🎵' : '🎬';
+    const qualityLabel = type === 'audio'
+      ? translations[lang].quality_select.options.audio
+      : quality;
+    const doneCaption = [
+      `${mediaEmoji} <b>${title}</b>`,
+      `🔗 https://youtu.be/${id}`,
+      `📥 ${qualityLabel}`,
+    ].join('\n');
+
+    try {
+      if (thumbnailUrl) {
+        await ctx.replyWithPhoto(thumbnailUrl, { caption: doneCaption, parse_mode: 'HTML' });
+      } else {
+        await ctx.reply(doneCaption, { parse_mode: 'HTML', link_preview_options: { is_disabled: true } });
+      }
+    } catch (e) {
+      console.error('Failed to send done message:', e);
+    }
+  }
 
   const prevCount = downloadCountMap.get(userId) ?? 0;
   const newCount = prevCount + (size - errorSize);
@@ -124,27 +157,35 @@ async function processMedia(ctx, quality, type = 'video+audio') {
   }
 }
 
-function buildQualityKeyboard(lang, qualityLabels) {
+function getBestThumbnailUrl(thumbnails) {
+  const jpegs = (thumbnails ?? []).filter((t) => !t.url?.includes('.webp'));
+  if (!jpegs.length) return null;
+  return jpegs.reduce((best, t) => ((t.width ?? 0) > (best.width ?? 0) ? t : best)).url;
+}
+
+function getQualityLabels(streamingData) {
+  const labels = [...new Set(
+    (streamingData?.formats ?? []).map((f) => f.quality_label).filter(Boolean)
+  )];
+  return labels.sort((a, b) => parseInt(a) - parseInt(b));
+}
+
+function hasAudioTrack(streamingData) {
+  return (streamingData?.adaptive_formats ?? []).some(
+    (f) => f.mime_type?.startsWith('audio/')
+  );
+}
+
+function buildQualityKeyboard(lang, qualityLabels, audioAvailable) {
   const keyboard = new InlineKeyboard();
-  keyboard.text(translations[lang].quality_select.options.best, 'dl:best');
   for (const label of qualityLabels) {
     keyboard.text(label, `dl:${label}`);
   }
-  keyboard.row().text(translations[lang].quality_select.options.audio, 'dl:audio');
+  if (audioAvailable) {
+    keyboard.row().text(translations[lang].quality_select.options.audio, 'dl:audio');
+  }
   return keyboard;
 }
-
-const selectLangMenu = new Menu('select-lang-menu')
-  .text(translations.en.language_select.value, async (ctx) => {
-    langMap.set(ctx.from.id, 'en');
-    await ctx.reply(translations.en.getting_started);
-  })
-  .text(translations.ru.language_select.value, async (ctx) => {
-    langMap.set(ctx.from.id, 'ru');
-    await ctx.reply(translations.ru.getting_started);
-  });
-
-bot.use(selectLangMenu);
 
 bot.on('callback_query:data', async (ctx) => {
   const data = ctx.callbackQuery.data;
@@ -153,38 +194,29 @@ bot.on('callback_query:data', async (ctx) => {
 
   await ctx.answerCallbackQuery();
 
+  const sourceMsg = ctx.callbackQuery.message;
   const value = data.slice(3);
   if (value === 'audio') {
-    await processMedia(ctx, 'best', 'audio');
+    await processMedia(ctx, 'best', 'audio', sourceMsg);
   } else {
-    await processMedia(ctx, value);
+    await processMedia(ctx, value, 'video+audio', sourceMsg);
   }
 });
 
 bot.command('start', async (ctx) => {
-  const userId = ctx.from.id;
-
-  langMap.delete(userId);
-  pendingMap.delete(userId);
-
-  const greeting = [translations.en.greeting, translations.ru.greeting].join('\n');
-
-  await ctx.reply(greeting);
-
-  await selectLang(ctx);
-});
-
-bot.command('lang', async (ctx) => {
-  await selectLang(ctx);
+  const lang = getLang(ctx);
+  pendingMap.delete(ctx.from.id);
+  await ctx.reply(translations[lang].greeting);
+  await ctx.reply(translations[lang].getting_started);
 });
 
 bot.command('donate', async (ctx) => {
-  const lang = getLang(ctx.from.id);
+  const lang = getLang(ctx);
   await ctx.reply(buildDonateText(lang), { parse_mode: 'HTML' });
 });
 
 bot.command('support', async (ctx) => {
-  const lang = getLang(ctx.from.id);
+  const lang = getLang(ctx);
   const t = translations[lang].support;
 
   const text = [
@@ -200,7 +232,7 @@ bot.command('support', async (ctx) => {
 bot.on('message', async (ctx) => {
   const userId = ctx.from.id;
   const url = ctx.message.text?.trim();
-  const lang = getLang(userId);
+  const lang = getLang(ctx);
 
   if (!url) {
     await ctx.reply(translations[lang].errors.no_url);
@@ -208,16 +240,15 @@ bot.on('message', async (ctx) => {
   }
 
   try {
-    await ctx.reply(translations[lang].status.searching);
-
     let videos = [];
     let qualityLabels = [];
+    let audioAvailable = false;
+    let thumbnailUrl = null;
+    let caption = null;
 
     if (isYouTubePlaylist(url)) {
       const playlistId = new URL(url).searchParams.get('list');
       const playlist = await innertube.getPlaylist(playlistId);
-
-      await ctx.reply(`${translations[lang].status.found} "${playlist.info.title}"`);
 
       for (const video of playlist.items) {
         if (video.type === 'PlaylistVideo') {
@@ -226,32 +257,49 @@ bot.on('message', async (ctx) => {
       }
 
       if (videos.length > 0) {
-        const info = await innertube.getBasicInfo(videos[0].id);
-        const formats = info.streaming_data?.formats ?? [];
-        qualityLabels = [...new Set(formats.map((f) => f.quality_label).filter(Boolean))];
+        const [info, audioInfo] = await Promise.all([
+          innertube.getBasicInfo(videos[0].id),
+          innertube.getBasicInfo(videos[0].id, 'WEB_EMBEDDED'),
+        ]);
+        qualityLabels = getQualityLabels(info.streaming_data);
+        audioAvailable = hasAudioTrack(audioInfo.streaming_data);
+        thumbnailUrl = getBestThumbnailUrl(info.basic_info.thumbnail);
       }
+
+      caption = `📋 <b>${playlist.info.title}</b>`;
     } else {
       const videoId = extractVideoId(url);
-      const info = await innertube.getBasicInfo(videoId);
+      const [info, audioInfo] = await Promise.all([
+        innertube.getBasicInfo(videoId),
+        innertube.getBasicInfo(videoId, 'WEB_EMBEDDED'),
+      ]);
       const title = info.basic_info.title ?? url;
-      const formats = info.streaming_data?.formats ?? [];
 
-      qualityLabels = [...new Set(formats.map((f) => f.quality_label).filter(Boolean))];
+      qualityLabels = getQualityLabels(info.streaming_data);
+      audioAvailable = hasAudioTrack(audioInfo.streaming_data);
+      thumbnailUrl = getBestThumbnailUrl(info.basic_info.thumbnail);
       videos.push({ id: videoId, title });
-
-      await ctx.reply(`${translations[lang].status.found} "${title}"`);
+      caption = `🎬 <b>${title}</b>`;
     }
 
     if (videos.length === 0) return;
 
-    pendingMap.set(userId, videos);
+    pendingMap.set(userId, { videos, thumbnailUrl });
 
-    await ctx.reply(translations[lang].quality_select.label, {
-      reply_markup: buildQualityKeyboard(lang, qualityLabels),
-    });
+    const keyboard = buildQualityKeyboard(lang, qualityLabels, audioAvailable);
+
+    if (thumbnailUrl) {
+      await ctx.replyWithPhoto(thumbnailUrl, { caption, parse_mode: 'HTML', reply_markup: keyboard });
+    } else {
+      await ctx.reply(caption, { parse_mode: 'HTML', reply_markup: keyboard });
+    }
   } catch (error) {
     console.error(error);
-    await ctx.reply(`${translations[lang].status.error} (${error.message})`);
+    if (error.message === 'Invalid URL') {
+      await ctx.reply(translations[lang].errors.invalid_url);
+    } else {
+      await ctx.reply(`${translations[lang].status.error} (${error.message})`);
+    }
   }
 });
 

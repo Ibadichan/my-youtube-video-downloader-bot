@@ -16,6 +16,7 @@ const translations = {
     },
     errors: {
       no_url: "No url provided.",
+      invalid_url: "Copy the video link and send it to the bot 💙",
     },
     quality_select: {
       label: "Select quality:",
@@ -52,6 +53,7 @@ const translations = {
     },
     errors: {
       no_url: "URL-адрес не указан.",
+      invalid_url: "Скопируй ссылку на видео/фото и отправь боту 💙",
     },
     quality_select: {
       label: "Выберите качество:",
