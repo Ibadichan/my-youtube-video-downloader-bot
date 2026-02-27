@@ -24,6 +24,7 @@ const translations = {
       label: "Select quality:",
       options: {
         best: "Best",
+        other: "▼ Other",
         audio: "🎶 Audio",
       },
     },
@@ -63,6 +64,7 @@ const translations = {
       label: "Выберите качество:",
       options: {
         best: "Лучшее",
+        other: "▼ Другие",
         audio: "🎶 Аудио",
       },
     },

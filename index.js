@@ -216,7 +216,7 @@ function getQualityLabels(streamingData) {
       .map((f) => f.quality_label)
       .filter(Boolean)
   )];
-  return labels.filter((l) => parseInt(l) >= 360 && parseInt(l) <= 1080).sort((a, b) => parseInt(a) - parseInt(b));
+  return labels.sort((a, b) => parseInt(a) - parseInt(b));
 }
 
 function hasAudioTrack(streamingData) {
@@ -277,14 +277,31 @@ async function downloadAudioOnly(id) {
   throw lastError;
 }
 
-function buildQualityKeyboard(lang, qualityLabels, audioAvailable) {
+const MAIN_RESOLUTIONS = [360, 480, 720, 1080];
+
+function buildQualityKeyboard(lang, qualityLabels, audioAvailable, showAll = false) {
   const keyboard = new InlineKeyboard();
-  for (const label of qualityLabels) {
+  // For each main resolution pick the first matching label (e.g. "1080p60" if "1080p" is absent)
+  const mainLabels = MAIN_RESOLUTIONS
+    .map((res) => qualityLabels.find((l) => parseInt(l) === res))
+    .filter(Boolean);
+  const mainSet = new Set(mainLabels);
+  const extraLabels = qualityLabels.filter((l) => !mainSet.has(l));
+  const toShow = (showAll || mainLabels.length === 0) ? qualityLabels : mainLabels;
+
+  toShow.forEach((label, i) => {
+    if (i > 0 && i % 4 === 0) keyboard.row();
     keyboard.text(`🎬 ${label}`, `dl:${label}`);
+  });
+
+  if (!showAll && mainLabels.length > 0 && extraLabels.length > 0) {
+    keyboard.row().text(translations[lang].quality_select.options.other, 'dl:more');
   }
+
   if (audioAvailable) {
     keyboard.row().text(translations[lang].quality_select.options.audio, 'dl:audio');
   }
+
   return keyboard;
 }
 
@@ -295,8 +312,20 @@ bot.on('callback_query:data', async (ctx) => {
 
   await ctx.answerCallbackQuery();
 
-  const sourceMsg = ctx.callbackQuery.message;
+  const lang = getLang(ctx);
   const value = data.slice(3);
+
+  if (value === 'more') {
+    const entry = pendingMap.get(ctx.from.id);
+    if (!entry) return;
+    const keyboard = buildQualityKeyboard(lang, entry.qualityLabels, entry.audioAvailable, true);
+    await ctx.editMessageReplyMarkup({ reply_markup: keyboard }).catch((e) => {
+      if (e.error_code !== 400) throw e;
+    });
+    return;
+  }
+
+  const sourceMsg = ctx.callbackQuery.message;
   if (value === 'audio') {
     processMedia(ctx, 'best', 'audio', sourceMsg).catch(console.error);
   } else {
@@ -381,7 +410,7 @@ bot.on('message', async (ctx) => {
 
     if (videos.length === 0) return;
 
-    pendingMap.set(userId, { videos, thumbnailUrl });
+    pendingMap.set(userId, { videos, thumbnailUrl, qualityLabels, audioAvailable });
 
     const keyboard = buildQualityKeyboard(lang, qualityLabels, audioAvailable);
 
