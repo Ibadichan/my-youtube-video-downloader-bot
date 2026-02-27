@@ -211,7 +211,7 @@ function getQualityLabels(streamingData) {
       .map((f) => f.quality_label)
       .filter(Boolean)
   )];
-  return labels.filter((l) => parseInt(l) >= 360).sort((a, b) => parseInt(a) - parseInt(b));
+  return labels.filter((l) => parseInt(l) >= 360 && parseInt(l) <= 1080).sort((a, b) => parseInt(a) - parseInt(b));
 }
 
 function hasAudioTrack(streamingData) {
@@ -275,7 +275,7 @@ async function downloadAudioOnly(id) {
 function buildQualityKeyboard(lang, qualityLabels, audioAvailable) {
   const keyboard = new InlineKeyboard();
   for (const label of qualityLabels) {
-    keyboard.text(label, `dl:${label}`);
+    keyboard.text(`🎬 ${label}`, `dl:${label}`);
   }
   if (audioAvailable) {
     keyboard.row().text(translations[lang].quality_select.options.audio, 'dl:audio');

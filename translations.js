@@ -24,7 +24,7 @@ const translations = {
       label: "Select quality:",
       options: {
         best: "Best",
-        audio: "Audio only",
+        audio: "🎶 Audio",
       },
     },
     donate: {
@@ -63,7 +63,7 @@ const translations = {
       label: "Выберите качество:",
       options: {
         best: "Лучшее",
-        audio: "Только аудио",
+        audio: "🎶 Аудио",
       },
     },
     donate: {
