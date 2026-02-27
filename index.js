@@ -168,8 +168,8 @@ async function processMedia(ctx, quality, type = 'video+audio', sourceMsg = null
     } catch (error) {
       errorSize += 1;
       console.error(error);
-      try { videoStream?.cancel(); } catch {}
-      try { audioStream?.cancel(); } catch {}
+      try { await videoStream?.cancel(); } catch {}
+      try { await audioStream?.cancel(); } catch {}
       const msg = error.error_code === 413
         ? translations[lang].errors.file_too_large
         : `${translations[lang].status.error} (${error.message})`;
@@ -235,7 +235,7 @@ async function getVideoInfoSafe(videoId) {
   return { web: web ?? embedded, embedded: embedded ?? web };
 }
 
-const DOWNLOAD_CLIENTS = ['WEB_EMBEDDED', 'WEB', 'ANDROID', 'TV_EMBEDDED'];
+const DOWNLOAD_CLIENTS = ['WEB_EMBEDDED', 'WEB', 'TV_EMBEDDED'];
 
 async function downloadVideoAudio(id, quality) {
   let lastError;
@@ -247,7 +247,7 @@ async function downloadVideoAudio(id, quality) {
       console.log(`[${client}] video+audio OK: ${id} (${quality})`);
       return { videoStream, audioStream };
     } catch (e) {
-      try { videoStream?.cancel(); } catch {}
+      try { await videoStream?.cancel(); } catch {}
       lastError = e;
       console.warn(`[${client}] video+audio failed for ${id}: ${e.message}`);
     }
