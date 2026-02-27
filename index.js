@@ -1,10 +1,54 @@
 import 'dotenv/config';
 
+import { createWriteStream, createReadStream } from 'fs';
+import { unlink } from 'fs/promises';
+import { join } from 'path';
+import { tmpdir } from 'os';
+import { randomBytes } from 'crypto';
+import { pipeline } from 'stream/promises';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { Innertube, Platform, UniversalCache, Utils } from 'youtubei.js';
 import { Bot, InputFile, InlineKeyboard, webhookCallback } from 'grammy';
 import express from 'express';
 import translations from './translations.js';
 import { isYouTubePlaylist, extractVideoId } from './utils.js';
+
+const execFileAsync = promisify(execFile);
+
+async function writeStreamToFile(stream, filePath) {
+  await pipeline(Utils.streamToIterable(stream), createWriteStream(filePath));
+}
+
+async function mergeVideoAudio(videoStream, audioStream) {
+  const prefix = join(tmpdir(), randomBytes(8).toString('hex'));
+  const videoPath = `${prefix}_v.mp4`;
+  const audioPath = `${prefix}_a.mp4`;
+  const outputPath = `${prefix}_out.mp4`;
+
+  try {
+    await Promise.all([
+      writeStreamToFile(videoStream, videoPath),
+      writeStreamToFile(audioStream, audioPath),
+    ]);
+
+    await execFileAsync('ffmpeg', [
+      '-i', videoPath,
+      '-i', audioPath,
+      '-c:v', 'copy',
+      '-c:a', 'aac',
+      '-movflags', 'faststart',
+      outputPath,
+    ]);
+
+    return outputPath;
+  } finally {
+    await Promise.all([
+      unlink(videoPath).catch(() => {}),
+      unlink(audioPath).catch(() => {}),
+    ]);
+  }
+}
 
 Platform.shim.eval = (data, env) => {
   const properties = [];
@@ -34,8 +78,8 @@ const WALLETS = {
 const innertube = await Innertube.create({
   cookie: YOUTUBE_COOKIE,
   cache: new UniversalCache(false),
-  generate_session_locally: true,
 });
+console.log('Innertube initialized');
 
 const pendingMap = new Map(); // Map<userId, { videos: { id, title }[], thumbnailUrl: string|null }>
 const downloadCountMap = new Map(); // Map<userId, number>
@@ -101,22 +145,35 @@ async function processMedia(ctx, quality, type = 'video+audio', sourceMsg = null
 
   while (videoList.length > 0) {
     const { id, title } = videoList.at(-1);
-    let stream;
+    let videoStream, audioStream;
 
     try {
-      const client = type === 'audio' ? 'WEB_EMBEDDED' : 'WEB';
-      stream = await innertube.download(id, { type, quality, client });
-
       if (type === 'audio') {
-        await ctx.replyWithAudio(new InputFile(Utils.streamToIterable(stream), 'audio.mp3'), { title });
+        audioStream = await downloadAudioOnly(id);
+        await ctx.replyWithAudio(new InputFile(Utils.streamToIterable(audioStream), 'audio.mp3'), { title });
       } else {
-        await ctx.replyWithVideo(new InputFile(Utils.streamToIterable(stream), 'video.mp4'), { title });
+        ({ videoStream, audioStream } = await downloadVideoAudio(id, quality));
+        const outputPath = await mergeVideoAudio(videoStream, audioStream);
+        const caption = [
+          `🎬 <b>${title}</b>`,
+          `🔗 https://youtu.be/${id}`,
+          `📥 ${quality}`,
+        ].join('\n');
+        try {
+          await ctx.replyWithVideo(new InputFile(createReadStream(outputPath), 'video.mp4'), { caption, parse_mode: 'HTML' });
+        } finally {
+          await unlink(outputPath).catch(() => {});
+        }
       }
     } catch (error) {
       errorSize += 1;
       console.error(error);
-      stream?.cancel();
-      await ctx.reply(`${translations[lang].status.error} (${error.message})`);
+      try { videoStream?.cancel(); } catch {}
+      try { audioStream?.cancel(); } catch {}
+      const msg = error.error_code === 413
+        ? translations[lang].errors.file_too_large
+        : `${translations[lang].status.error} (${error.message})`;
+      await ctx.reply(msg);
     }
 
     videoList.pop();
@@ -129,6 +186,8 @@ async function processMedia(ctx, quality, type = 'video+audio', sourceMsg = null
       console.error('Failed to delete loading message:', e);
     }
   }
+
+  console.log(`[user:${userId}] done: ${size - errorSize}/${size} ok`);
 
   const prevCount = downloadCountMap.get(userId) ?? 0;
   const newCount = prevCount + (size - errorSize);
@@ -147,15 +206,70 @@ function getBestThumbnailUrl(thumbnails) {
 
 function getQualityLabels(streamingData) {
   const labels = [...new Set(
-    (streamingData?.formats ?? []).map((f) => f.quality_label).filter(Boolean)
+    (streamingData?.adaptive_formats ?? [])
+      .filter((f) => f.mime_type?.startsWith('video/'))
+      .map((f) => f.quality_label)
+      .filter(Boolean)
   )];
-  return labels.sort((a, b) => parseInt(a) - parseInt(b));
+  return labels.filter((l) => parseInt(l) >= 360).sort((a, b) => parseInt(a) - parseInt(b));
 }
 
 function hasAudioTrack(streamingData) {
   return (streamingData?.adaptive_formats ?? []).some(
     (f) => f.mime_type?.startsWith('audio/')
   );
+}
+
+// Tries WEB_EMBEDDED first (avoids login-required), falls back to WEB (for non-embeddable videos)
+async function getVideoInfoSafe(videoId) {
+  const [webResult, embeddedResult] = await Promise.allSettled([
+    innertube.getBasicInfo(videoId),
+    innertube.getBasicInfo(videoId, 'WEB_EMBEDDED'),
+  ]);
+  const web = webResult.status === 'fulfilled' ? webResult.value : null;
+  const embedded = embeddedResult.status === 'fulfilled' ? embeddedResult.value : null;
+  if (!web && !embedded) {
+    console.error(`getBasicInfo failed for ${videoId} — WEB: ${webResult.reason?.message} | WEB_EMBEDDED: ${embeddedResult.reason?.message}`);
+    throw webResult.reason;
+  }
+  return { web: web ?? embedded, embedded: embedded ?? web };
+}
+
+const DOWNLOAD_CLIENTS = ['WEB_EMBEDDED', 'WEB', 'ANDROID', 'TV_EMBEDDED'];
+
+async function downloadVideoAudio(id, quality) {
+  let lastError;
+  for (const client of DOWNLOAD_CLIENTS) {
+    let videoStream;
+    try {
+      videoStream = await innertube.download(id, { type: 'video', quality, client });
+      const audioStream = await innertube.download(id, { type: 'audio', quality: 'best', client });
+      console.log(`[${client}] video+audio OK: ${id} (${quality})`);
+      return { videoStream, audioStream };
+    } catch (e) {
+      try { videoStream?.cancel(); } catch {}
+      lastError = e;
+      console.warn(`[${client}] video+audio failed for ${id}: ${e.message}`);
+    }
+  }
+  console.error(`All clients failed for ${id} (${quality}): ${lastError?.message}`);
+  throw lastError;
+}
+
+async function downloadAudioOnly(id) {
+  let lastError;
+  for (const client of DOWNLOAD_CLIENTS) {
+    try {
+      const stream = await innertube.download(id, { type: 'audio', quality: 'best', client });
+      console.log(`[${client}] audio OK: ${id}`);
+      return stream;
+    } catch (e) {
+      lastError = e;
+      console.warn(`[${client}] audio failed for ${id}: ${e.message}`);
+    }
+  }
+  console.error(`All clients failed for audio ${id}: ${lastError?.message}`);
+  throw lastError;
 }
 
 function buildQualityKeyboard(lang, qualityLabels, audioAvailable) {
@@ -216,6 +330,8 @@ bot.on('message', async (ctx) => {
   const url = ctx.message.text?.trim();
   const lang = getLang(ctx);
 
+  console.log(`[user:${userId}] message: ${url}`);
+
   if (!url) {
     await ctx.reply(translations[lang].errors.no_url);
     return;
@@ -239,11 +355,8 @@ bot.on('message', async (ctx) => {
       }
 
       if (videos.length > 0) {
-        const [info, audioInfo] = await Promise.all([
-          innertube.getBasicInfo(videos[0].id),
-          innertube.getBasicInfo(videos[0].id, 'WEB_EMBEDDED'),
-        ]);
-        qualityLabels = getQualityLabels(info.streaming_data);
+        const { web: info, embedded: audioInfo } = await getVideoInfoSafe(videos[0].id);
+        qualityLabels = getQualityLabels(audioInfo.streaming_data);
         audioAvailable = hasAudioTrack(audioInfo.streaming_data);
         thumbnailUrl = getBestThumbnailUrl(info.basic_info.thumbnail);
       }
@@ -251,13 +364,10 @@ bot.on('message', async (ctx) => {
       caption = `📋 <b>${playlist.info.title}</b>`;
     } else {
       const videoId = extractVideoId(url);
-      const [info, audioInfo] = await Promise.all([
-        innertube.getBasicInfo(videoId),
-        innertube.getBasicInfo(videoId, 'WEB_EMBEDDED'),
-      ]);
+      const { web: info, embedded: audioInfo } = await getVideoInfoSafe(videoId);
       const title = info.basic_info.title ?? url;
 
-      qualityLabels = getQualityLabels(info.streaming_data);
+      qualityLabels = getQualityLabels(audioInfo.streaming_data);
       audioAvailable = hasAudioTrack(audioInfo.streaming_data);
       thumbnailUrl = getBestThumbnailUrl(info.basic_info.thumbnail);
       videos.push({ id: videoId, title });

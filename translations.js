@@ -18,6 +18,7 @@ const translations = {
       no_url: "No url provided.",
       invalid_url: "Copy the video link and send it to the bot 💙",
       session_expired: "Session expired. Please send the link again.",
+      file_too_large: "The file is too large for Telegram (max 50 MB). Try a lower quality.",
     },
     quality_select: {
       label: "Select quality:",
@@ -56,6 +57,7 @@ const translations = {
       no_url: "URL-адрес не указан.",
       invalid_url: "Скопируй ссылку на видео/фото и отправь боту 💙",
       session_expired: "Сессия устарела. Пожалуйста, отправь ссылку заново.",
+      file_too_large: "Файл слишком большой для Telegram (макс. 50 МБ). Попробуй качество ниже.",
     },
     quality_select: {
       label: "Выберите качество:",
