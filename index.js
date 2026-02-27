@@ -6,7 +6,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { randomBytes } from 'crypto';
 import { pipeline } from 'stream/promises';
-import { execFile } from 'child_process';
+import { execFile, execSync } from 'child_process';
 import { promisify } from 'util';
 import { Innertube, Platform, UniversalCache, Utils } from 'youtubei.js';
 import { Bot, InputFile, InlineKeyboard, webhookCallback } from 'grammy';
@@ -15,6 +15,11 @@ import translations from './translations.js';
 import { isYouTubePlaylist, extractVideoId } from './utils.js';
 
 const execFileAsync = promisify(execFile);
+
+const FFMPEG_PATH = (() => {
+  try { return execSync('which ffmpeg').toString().trim(); } catch { return 'ffmpeg'; }
+})();
+console.log('ffmpeg path:', FFMPEG_PATH);
 
 async function writeStreamToFile(stream, filePath) {
   await pipeline(Utils.streamToIterable(stream), createWriteStream(filePath));
@@ -32,7 +37,7 @@ async function mergeVideoAudio(videoStream, audioStream) {
       writeStreamToFile(audioStream, audioPath),
     ]);
 
-    await execFileAsync('ffmpeg', [
+    await execFileAsync(FFMPEG_PATH, [
       '-i', videoPath,
       '-i', audioPath,
       '-c:v', 'copy',
