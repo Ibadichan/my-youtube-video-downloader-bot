@@ -216,7 +216,9 @@ function getQualityLabels(streamingData) {
       .map((f) => f.quality_label)
       .filter(Boolean)
   )];
-  return labels.sort((a, b) => parseInt(a) - parseInt(b));
+  return labels
+    .filter((l) => parseInt(l) >= 360 && !l.toUpperCase().includes('HDR'))
+    .sort((a, b) => parseInt(a) - parseInt(b));
 }
 
 function hasAudioTrack(streamingData) {
