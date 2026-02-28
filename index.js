@@ -68,7 +68,12 @@ Platform.shim.eval = (data, env) => {
 
   const code = `${data.output}\nreturn { ${properties.join(', ')} }`;
 
-  return new Function(code)();
+  try {
+    return new Function(code)();
+  } catch (e) {
+    console.error('[shim.eval] decipher failed:', e.message);
+    throw e;
+  }
 };
 
 const { TELEGRAM_TOKEN, TELEGRAM_WEBHOOK_URL, YOUTUBE_COOKIE } = process.env;
@@ -157,17 +162,26 @@ async function processMedia(ctx, quality, type = 'video+audio', sourceMsg = null
         audioStream = await downloadAudioOnly(id);
         await ctx.replyWithAudio(new InputFile(Utils.streamToIterable(audioStream), 'audio.mp3'), { title });
       } else {
-        ({ videoStream, audioStream } = await downloadVideoAudio(id, quality));
-        const outputPath = await mergeVideoAudio(videoStream, audioStream);
+        const dlResult = await downloadVideoAudio(id, quality);
+        ({ videoStream, audioStream } = dlResult);
+
+        const qualityLabel = dlResult.isMuxed ? '360p (fallback)' : quality;
         const caption = [
           `🎬 <b>${title}</b>`,
           `🔗 https://youtu.be/${id}`,
-          `📥 ${quality}`,
+          `📥 ${qualityLabel}`,
         ].join('\n');
-        try {
-          await ctx.replyWithVideo(new InputFile(createReadStream(outputPath), 'video.mp4'), { caption, parse_mode: 'HTML' });
-        } finally {
-          await unlink(outputPath).catch(() => {});
+
+        if (dlResult.isMuxed) {
+          // Stream directly — no disk write needed
+          await ctx.replyWithVideo(new InputFile(Utils.streamToIterable(videoStream), 'video.mp4'), { caption, parse_mode: 'HTML' });
+        } else {
+          const outputPath = await mergeVideoAudio(videoStream, audioStream);
+          try {
+            await ctx.replyWithVideo(new InputFile(createReadStream(outputPath), 'video.mp4'), { caption, parse_mode: 'HTML' });
+          } finally {
+            await unlink(outputPath).catch(() => {});
+          }
         }
       }
     } catch (error) {
@@ -251,12 +265,22 @@ async function downloadVideoAudio(id, quality) {
     try {
       videoStream = await innertube.download(id, { type: 'video', quality, client });
       const audioStream = await innertube.download(id, { type: 'audio', quality: 'best', client });
-      console.log(`[${client}] video+audio OK: ${id} (${quality})`);
+      console.log(`[${client}] adaptive OK: ${id} (${quality})`);
       return { videoStream, audioStream };
     } catch (e) {
       try { await videoStream?.cancel(); } catch {}
       lastError = e;
-      console.warn(`[${client}] video+audio failed for ${id}: ${e.message}`);
+      console.warn(`[${client}] adaptive failed for ${id} (${quality}): ${e.message}`);
+    }
+  }
+  // Muxed fallback: pre-merged stream (usually ≤360p), may bypass decipher issues
+  for (const client of DOWNLOAD_CLIENTS) {
+    try {
+      const stream = await innertube.download(id, { type: 'video+audio', client });
+      console.log(`[${client}] muxed fallback OK: ${id}`);
+      return { videoStream: stream, isMuxed: true };
+    } catch (e) {
+      console.warn(`[${client}] muxed fallback failed for ${id}: ${e.message}`);
     }
   }
   console.error(`All clients failed for ${id} (${quality}): ${lastError?.message}`);
