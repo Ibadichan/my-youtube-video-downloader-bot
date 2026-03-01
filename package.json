@@ -1,12 +1,12 @@
 {
-  "name": "my-youtube-video-downloader-bot",
+  "name": "save-yt-media-bot",
   "version": "1.0.5",
   "engines": {
     "node": ">=20.18.1"
   },
   "type": "module",
   "main": "index.js",
-  "repository": "git@github.com:Ibadichan/my-youtube-video-downloader-bot.git",
+  "repository": "git@github.com:Ibadichan/save-yt-media-bot.git",
   "author": "Ivan Badicean <badican01117@gmail.com>",
   "license": "MIT",
   "scripts": {

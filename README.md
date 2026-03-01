@@ -1,4 +1,4 @@
-# my-youtube-video-downloader-bot
+# SaveYTMediaBot
 
 Telegram-бот для скачивания видео и аудио с YouTube.
 
