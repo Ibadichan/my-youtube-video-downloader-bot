@@ -146,7 +146,14 @@ async function processMedia(ctx, quality, type = 'video+audio', sourceMsg = null
     return;
   }
 
-  const { videos: videoList, thumbnailUrl } = entry;
+  const { videos: videoList, thumbnailUrl, duration } = entry;
+
+  if (type !== 'audio' && MAX_VIDEO_DURATION_SEC && duration && duration > MAX_VIDEO_DURATION_SEC) {
+    const maxMin = Math.round(MAX_VIDEO_DURATION_SEC / 60);
+    const durationMin = Math.ceil(duration / 60);
+    await ctx.reply(`${translations[lang].errors.video_too_long} ${maxMin} min (video: ${durationMin} min)`);
+    return;
+  }
   const size = videoList.length;
   let errorSize = 0;
   let infoMsg = null;
@@ -424,6 +431,7 @@ bot.on('message', async (ctx) => {
     let audioAvailable = false;
     let thumbnailUrl = null;
     let caption = null;
+    let duration = null;
 
     if (isYouTubePlaylist(url)) {
       const playlistId = new URL(url).searchParams.get('list');
@@ -447,14 +455,7 @@ bot.on('message', async (ctx) => {
       const videoId = extractVideoId(url);
       const { web: info, embedded: audioInfo } = await getVideoInfoSafe(videoId);
       const title = info.basic_info.title ?? url;
-
-      const duration = info.basic_info.duration;
-      if (MAX_VIDEO_DURATION_SEC && duration && duration > MAX_VIDEO_DURATION_SEC) {
-        const maxMin = Math.round(MAX_VIDEO_DURATION_SEC / 60);
-        const durationMin = Math.ceil(duration / 60);
-        await ctx.reply(`${translations[lang].errors.video_too_long} ${maxMin} min (video: ${durationMin} min)`);
-        return;
-      }
+      duration = info.basic_info.duration ?? null;
 
       qualityLabels = getQualityLabels(audioInfo.streaming_data);
       audioAvailable = hasAudioTrack(audioInfo.streaming_data);
@@ -465,7 +466,7 @@ bot.on('message', async (ctx) => {
 
     if (videos.length === 0) return;
 
-    pendingMap.set(userId, { videos, thumbnailUrl, qualityLabels, audioAvailable });
+    pendingMap.set(userId, { videos, thumbnailUrl, qualityLabels, audioAvailable, duration });
 
     const keyboard = buildQualityKeyboard(lang, qualityLabels, audioAvailable);
 
