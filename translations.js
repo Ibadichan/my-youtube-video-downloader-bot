@@ -30,6 +30,7 @@ const translations = {
     },
     donate: {
       label: "Support the bot ❤️",
+      appeal: "❤️ This bot and its servers run purely on donations — no ads, no \"subscribe to our channel\" nonsense. If it's useful to you, please consider supporting the project!",
       copied: "Tap an address to copy it.",
       other_payments: "Other payment methods — write me",
     },
@@ -70,6 +71,7 @@ const translations = {
     },
     donate: {
       label: "Поддержать бота ❤️",
+      appeal: "❤️ Этот бот и сервера существуют исключительно на пожертвования — без рекламы и просьб подписаться на сторонние каналы. Если бот полезен, поддержите проект!",
       copied: "Нажми на адрес, чтобы скопировать.",
       other_payments: "Другие способы оплаты — напиши мне",
     },

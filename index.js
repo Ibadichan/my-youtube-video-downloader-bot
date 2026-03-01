@@ -368,6 +368,8 @@ bot.command('start', async (ctx) => {
   pendingMap.delete(ctx.from.id);
   await ctx.reply(translations[lang].greeting);
   await ctx.reply(translations[lang].getting_started);
+  await ctx.reply(translations[lang].donate.appeal);
+  await ctx.reply(buildDonateText(lang), { parse_mode: 'HTML' });
 });
 
 bot.command('donate', async (ctx) => {
