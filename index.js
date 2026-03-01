@@ -499,6 +499,7 @@ async function setupWebhook() {
 if (process.env.NODE_ENV === 'production') {
   // Use Webhooks for the production server
   const app = express();
+  app.set('trust proxy', 1);
   app.use(express.json());
   app.use(rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: true, legacyHeaders: false }));
   app.use(webhookCallback(bot, 'express'));
@@ -516,5 +517,5 @@ if (process.env.NODE_ENV === 'production') {
   setupWebhook();
 } else {
   // Use Long Polling for development
-  bot.start();
+  bot.start({ drop_pending_updates: true });
 }
