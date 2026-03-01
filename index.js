@@ -76,7 +76,7 @@ Platform.shim.eval = (data, env) => {
   }
 };
 
-const { TELEGRAM_TOKEN, TELEGRAM_WEBHOOK_URL, YOUTUBE_COOKIE } = process.env;
+const { TELEGRAM_TOKEN, TELEGRAM_WEBHOOK_URL, YOUTUBE_COOKIE, DONATE_CARD, DONATE_PEREVODILKA } = process.env;
 
 const WALLETS = {
   BTC:        '1KgxUoCK87hPrLVDXYwpQzZqS6Mus7D6N8',
@@ -107,6 +107,8 @@ function buildDonateText(lang) {
     `⟠ ETH (ERC20):\n<code>${WALLETS.ETH}</code>`,
     `ꘜ TON (TON):\n<code>${WALLETS.TON}</code>`,
     `₮ USDT (TRC20):\n<code>${WALLETS.USDT_TRC20}</code>`,
+    ...(DONATE_CARD ? [`💳 Visa/Mastercard:\n<code>${DONATE_CARD}</code>`] : []),
+    ...(DONATE_PEREVODILKA ? [`💸 Perevodilka PMR:\n<code>${DONATE_PEREVODILKA}</code>`] : []),
     '',
     `<i>${t.copied}</i>`,
     '',
@@ -256,7 +258,7 @@ async function getVideoInfoSafe(videoId) {
   return { web: web ?? embedded, embedded: embedded ?? web };
 }
 
-const DOWNLOAD_CLIENTS = ['WEB_EMBEDDED', 'WEB', 'TV_EMBEDDED'];
+const DOWNLOAD_CLIENTS = ['WEB_EMBEDDED', 'WEB', 'MWEB', 'TV_EMBEDDED'];
 
 async function downloadVideoAudio(id, quality) {
   let lastError;
