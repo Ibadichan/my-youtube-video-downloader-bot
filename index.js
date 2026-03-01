@@ -11,6 +11,7 @@ import { promisify } from 'util';
 import { Innertube, Platform, UniversalCache, Utils } from 'youtubei.js';
 import { Bot, InputFile, InlineKeyboard, webhookCallback } from 'grammy';
 import express from 'express';
+import { rateLimit } from 'express-rate-limit';
 import translations from './translations.js';
 import { isYouTubePlaylist, extractVideoId } from './utils.js';
 
@@ -498,6 +499,7 @@ if (process.env.NODE_ENV === 'production') {
   // Use Webhooks for the production server
   const app = express();
   app.use(express.json());
+  app.use(rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: true, legacyHeaders: false }));
   app.use(webhookCallback(bot, 'express'));
 
   const PORT = process.env.PORT || 3000;
