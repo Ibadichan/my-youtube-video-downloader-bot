@@ -76,7 +76,7 @@ Platform.shim.eval = (data, env) => {
   }
 };
 
-const { TELEGRAM_TOKEN, TELEGRAM_WEBHOOK_URL, YOUTUBE_COOKIE, DONATE_CARD, DONATE_PEREVODILKA } = process.env;
+const { TELEGRAM_TOKEN, TELEGRAM_WEBHOOK_URL, TELEGRAM_API_URL, YOUTUBE_COOKIE, DONATE_CARD, DONATE_PEREVODILKA } = process.env;
 
 const WALLETS = {
   BTC:        '1KgxUoCK87hPrLVDXYwpQzZqS6Mus7D6N8',
@@ -117,7 +117,9 @@ function buildDonateText(lang) {
   ].join('\n');
 }
 
-const bot = new Bot(TELEGRAM_TOKEN);
+const bot = new Bot(TELEGRAM_TOKEN, {
+  client: { apiRoot: TELEGRAM_API_URL },
+});
 
 bot.catch((err) => console.error('Unhandled bot error:', err));
 
@@ -459,20 +461,11 @@ bot.on('message', async (ctx) => {
 
 async function setupWebhook() {
   try {
-    await fetch(
-      `https://api.telegram.org/bot${TELEGRAM_TOKEN}/deleteWebhook?drop_pending_updates=true`
-    );
-
-    const res = await fetch(
-      `https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook?url=${TELEGRAM_WEBHOOK_URL}`
-    );
-    if (!res.ok) {
-      throw new Error('Network response was not ok');
-    }
-    const data = await res.json();
-    console.log('Telegram webhook', data);
+    await bot.api.deleteWebhook({ drop_pending_updates: true });
+    await bot.api.setWebhook(TELEGRAM_WEBHOOK_URL);
+    console.log('Webhook set:', TELEGRAM_WEBHOOK_URL);
   } catch (err) {
-    console.error('An error occurred while setting telegram webhook', err);
+    console.error('Failed to set webhook:', err);
   }
 }
 
