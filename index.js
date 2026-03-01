@@ -111,23 +111,45 @@ function getLang(ctx) {
   return ctx.from?.language_code === 'ru' ? 'ru' : 'en';
 }
 
-function buildDonateText(lang) {
+function buildCryptoText(lang) {
   const t = translations[lang].donate;
   return [
-    `<b>${t.label}</b>`,
+    `<b>${t.crypto_label}</b>`,
     '',
     `₿ BTC (BTC):\n<code>${WALLETS.BTC}</code>`,
     `⟠ ETH (ERC20):\n<code>${WALLETS.ETH}</code>`,
     `ꘜ TON (TON):\n<code>${WALLETS.TON}</code>`,
     `₮ USDT (TRC20):\n<code>${WALLETS.USDT_TRC20}</code>`,
-    ...(DONATE_CARD ? [`💳 Visa/Mastercard:\n<code>${DONATE_CARD}</code>`] : []),
-    ...(DONATE_PEREVODILKA ? [`💸 Perevodilka PMR:\n<code>${DONATE_PEREVODILKA}</code>`] : []),
     '',
     `<i>${t.copied}</i>`,
-    '',
-    `<i>${t.other_payments}</i>`,
-    `<a href="https://t.me/ibadichan">📬 @ibadichan</a>`,
   ].join('\n');
+}
+
+function buildPaymentsText(lang) {
+  const t = translations[lang].donate;
+  const lines = [`<b>${t.payments_label}</b>`, ''];
+  if (DONATE_CARD) lines.push(`💳 Visa/Mastercard:\n<code>${DONATE_CARD}</code>`);
+  if (DONATE_PEREVODILKA) lines.push(`💸 Perevodilka PMR:\n<code>${DONATE_PEREVODILKA}</code>`);
+  lines.push('', `<i>${t.copied}</i>`);
+  return lines.join('\n');
+}
+
+function buildSupportText(lang) {
+  const t = translations[lang].support;
+  return [
+    `<b>${t.label}</b>`,
+    '',
+    `📧 ${t.email}: <code>badican01117@gmail.com</code>`,
+    `📬 ${t.telegram}: <a href="https://t.me/ibadichan">t.me/ibadichan</a>`,
+  ].join('\n');
+}
+
+function buildDonateKeyboard(lang) {
+  const k = translations[lang].donate.keyboard;
+  return new InlineKeyboard()
+    .text(k.crypto, 'donate:crypto')
+    .text(k.payments, 'donate:payments')
+    .text(k.other, 'donate:other');
 }
 
 const bot = new Bot(TELEGRAM_TOKEN, {
@@ -192,7 +214,7 @@ async function processMedia(ctx, quality, type = 'video+audio', sourceMsg = null
 
         const qualityLabel = dlResult.isMuxed ? '360p (fallback)' : quality;
         const caption = [
-          `🎬 <b>${title}</b>`,
+          `⭐ <b>${title}</b>`,
           `🔗 https://youtu.be/${id}`,
           `📥 ${qualityLabel}`,
           ...(BOT_USERNAME ? [`💙 @${BOT_USERNAME}`] : []),
@@ -357,15 +379,11 @@ function buildQualityKeyboard(lang, qualityLabels, audioAvailable, showAll = fal
   return keyboard;
 }
 
-bot.on('callback_query:data', async (ctx) => {
-  const data = ctx.callbackQuery.data;
-
-  if (!data.startsWith('dl:')) return;
-
+bot.callbackQuery(/^dl:/, async (ctx) => {
   await ctx.answerCallbackQuery();
 
   const lang = getLang(ctx);
-  const value = data.slice(3);
+  const value = ctx.callbackQuery.data.slice(3);
 
   if (value === 'more') {
     const entry = pendingMap.get(ctx.from.id);
@@ -390,27 +408,40 @@ bot.command('start', async (ctx) => {
   pendingMap.delete(ctx.from.id);
   await ctx.reply(translations[lang].greeting);
   await ctx.reply(translations[lang].getting_started);
-  await ctx.reply(translations[lang].donate.appeal);
-  await ctx.reply(buildDonateText(lang), { parse_mode: 'HTML' });
+  await ctx.reply(translations[lang].donate.appeal, { reply_markup: buildDonateKeyboard(lang) });
 });
 
 bot.command('donate', async (ctx) => {
   const lang = getLang(ctx);
-  await ctx.reply(buildDonateText(lang), { parse_mode: 'HTML' });
+  await ctx.reply(translations[lang].donate.appeal, { reply_markup: buildDonateKeyboard(lang) });
 });
 
 bot.command('support', async (ctx) => {
   const lang = getLang(ctx);
-  const t = translations[lang].support;
+  await ctx.reply(buildSupportText(lang), { parse_mode: 'HTML' });
+});
 
-  const text = [
-    `<b>${t.label}</b>`,
-    '',
-    `📧 ${t.email}: <code>badican01117@gmail.com</code>`,
-    `📬 ${t.telegram}: <a href="https://t.me/ibadichan">t.me/ibadichan</a>`,
-  ].join('\n');
+bot.command('help', async (ctx) => {
+  const lang = getLang(ctx);
+  await ctx.reply(translations[lang].help.text, { parse_mode: 'HTML' });
+});
 
-  await ctx.reply(text, { parse_mode: 'HTML' });
+bot.callbackQuery('donate:crypto', async (ctx) => {
+  const lang = getLang(ctx);
+  await ctx.answerCallbackQuery();
+  await ctx.reply(buildCryptoText(lang), { parse_mode: 'HTML' });
+});
+
+bot.callbackQuery('donate:payments', async (ctx) => {
+  const lang = getLang(ctx);
+  await ctx.answerCallbackQuery();
+  await ctx.reply(buildPaymentsText(lang), { parse_mode: 'HTML' });
+});
+
+bot.callbackQuery('donate:other', async (ctx) => {
+  const lang = getLang(ctx);
+  await ctx.answerCallbackQuery();
+  await ctx.reply(buildSupportText(lang), { parse_mode: 'HTML' });
 });
 
 bot.on('message', async (ctx) => {
@@ -461,7 +492,7 @@ bot.on('message', async (ctx) => {
       audioAvailable = hasAudioTrack(audioInfo.streaming_data);
       thumbnailUrl = getBestThumbnailUrl(info.basic_info.thumbnail);
       videos.push({ id: videoId, title });
-      caption = `🎬 <b>${title}</b>`;
+      caption = `⭐ <b>${title}</b>`;
     }
 
     if (videos.length === 0) return;
