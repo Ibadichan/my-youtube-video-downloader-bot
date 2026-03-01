@@ -76,7 +76,15 @@ Platform.shim.eval = (data, env) => {
   }
 };
 
-const { TELEGRAM_TOKEN, TELEGRAM_WEBHOOK_URL, TELEGRAM_API_URL, YOUTUBE_COOKIE, DONATE_CARD, DONATE_PEREVODILKA } = process.env;
+const { 
+  TELEGRAM_TOKEN,
+  TELEGRAM_WEBHOOK_URL,
+  TELEGRAM_API_URL,
+  YOUTUBE_COOKIE,
+  DONATE_CARD,
+  DONATE_PEREVODILKA,
+  BOT_USERNAME,
+} = process.env;
 
 const WALLETS = {
   BTC:        '1KgxUoCK87hPrLVDXYwpQzZqS6Mus7D6N8',
@@ -164,7 +172,8 @@ async function processMedia(ctx, quality, type = 'video+audio', sourceMsg = null
     try {
       if (type === 'audio') {
         audioStream = await downloadAudioOnly(id);
-        await ctx.replyWithAudio(new InputFile(Utils.streamToIterable(audioStream), 'audio.mp3'), { title });
+        const audioCaption = BOT_USERNAME ? `💙 @${BOT_USERNAME}` : undefined;
+        await ctx.replyWithAudio(new InputFile(Utils.streamToIterable(audioStream), 'audio.mp3'), { title, caption: audioCaption });
       } else {
         const dlResult = await downloadVideoAudio(id, quality);
         ({ videoStream, audioStream } = dlResult);
@@ -174,6 +183,7 @@ async function processMedia(ctx, quality, type = 'video+audio', sourceMsg = null
           `🎬 <b>${title}</b>`,
           `🔗 https://youtu.be/${id}`,
           `📥 ${qualityLabel}`,
+          ...(BOT_USERNAME ? [`💙 @${BOT_USERNAME}`] : []),
         ].join('\n');
 
         if (dlResult.isMuxed) {
