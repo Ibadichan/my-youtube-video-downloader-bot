@@ -76,7 +76,7 @@ Platform.shim.eval = (data, env) => {
   }
 };
 
-const { 
+const {
   TELEGRAM_TOKEN,
   TELEGRAM_WEBHOOK_URL,
   TELEGRAM_API_URL,
@@ -85,6 +85,10 @@ const {
   DONATE_PEREVODILKA,
   BOT_USERNAME,
 } = process.env;
+
+const MAX_VIDEO_DURATION_SEC = process.env.MAX_VIDEO_DURATION_MIN
+  ? Number(process.env.MAX_VIDEO_DURATION_MIN) * 60
+  : null;
 
 const WALLETS = {
   BTC:        '1KgxUoCK87hPrLVDXYwpQzZqS6Mus7D6N8',
@@ -442,6 +446,14 @@ bot.on('message', async (ctx) => {
       const videoId = extractVideoId(url);
       const { web: info, embedded: audioInfo } = await getVideoInfoSafe(videoId);
       const title = info.basic_info.title ?? url;
+
+      const duration = info.basic_info.duration;
+      if (MAX_VIDEO_DURATION_SEC && duration && duration > MAX_VIDEO_DURATION_SEC) {
+        const maxMin = Math.round(MAX_VIDEO_DURATION_SEC / 60);
+        const durationMin = Math.ceil(duration / 60);
+        await ctx.reply(`${translations[lang].errors.video_too_long} ${maxMin} min (video: ${durationMin} min)`);
+        return;
+      }
 
       qualityLabels = getQualityLabels(audioInfo.streaming_data);
       audioAvailable = hasAudioTrack(audioInfo.streaming_data);
