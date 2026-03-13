@@ -49,13 +49,13 @@ const WALLETS = {
 const COOKIES_FILE = process.env.COOKIES_FILE ?? 'cookies.txt';
 
 function buildYtdlpArgs(extraArgs = []) {
-  const args = ['--no-check-certificates'];
+  const args = ['--no-check-certificates', '--js-runtimes', `node:${process.execPath}`];
   if (FFMPEG_PATH && FFMPEG_PATH !== 'ffmpeg') {
     args.push('--ffmpeg-location', FFMPEG_PATH);
   }
-  // if (existsSync(COOKIES_FILE)) {
-  //   args.push('--cookies', COOKIES_FILE);
-  // }
+  if (existsSync(COOKIES_FILE)) {
+    args.push('--cookies', COOKIES_FILE);
+  }
   // if (PROXY_URL) {
   //   args.push('--proxy', PROXY_URL);
   // }
