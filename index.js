@@ -49,7 +49,7 @@ const WALLETS = {
 const COOKIES_FILE = process.env.COOKIES_FILE ?? 'cookies.txt';
 
 function buildYtdlpArgs(extraArgs = []) {
-  const args = ['--no-check-certificates', '--js-runtimes', `node:${process.execPath}`];
+  const args = ['--no-check-certificates', '--js-runtimes', `node:${process.execPath}`, '--remote-components', 'ejs:github'];
   if (FFMPEG_PATH && FFMPEG_PATH !== 'ffmpeg') {
     args.push('--ffmpeg-location', FFMPEG_PATH);
   }
