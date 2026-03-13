@@ -11,7 +11,7 @@ import { Bot, InputFile, InlineKeyboard, webhookCallback } from 'grammy';
 import express from 'express';
 import { rateLimit } from 'express-rate-limit';
 import translations from './translations.js';
-import { isYouTubePlaylist, extractVideoId } from './utils.js';
+import { isYouTubeUrl, isYouTubePlaylist, extractVideoId } from './utils.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -29,7 +29,6 @@ const {
   TELEGRAM_TOKEN,
   TELEGRAM_WEBHOOK_URL,
   TELEGRAM_API_URL,
-  PROXY_URL,
   DONATE_CARD,
   DONATE_PEREVODILKA,
   BOT_USERNAME,
@@ -62,8 +61,7 @@ function buildYtdlpArgs(extraArgs = []) {
   return [...args, ...extraArgs];
 }
 
-async function getVideoInfo(videoId) {
-  const url = `https://www.youtube.com/watch?v=${videoId}`;
+async function getVideoInfo(url) {
   const args = buildYtdlpArgs(['--dump-json', '--no-playlist', url]);
   const { stdout } = await execFileAsync(YTDLP_PATH, args, {
     maxBuffer: 10 * 1024 * 1024,
@@ -109,18 +107,19 @@ function getBestThumbnailUrl(info) {
   return info.thumbnail ?? null;
 }
 
-async function downloadVideoAudio(id, qualityLabel) {
+async function downloadVideoAudio(url, qualityLabel) {
   const height = parseInt(qualityLabel);
   const prefix = join(tmpdir(), randomBytes(8).toString('hex'));
   const outputPath = `${prefix}.mp4`;
-  const url = `https://www.youtube.com/watch?v=${id}`;
 
-  const formatSelector = [
-    `bestvideo[height<=${height}][ext=mp4]+bestaudio[ext=m4a]`,
-    `bestvideo[height<=${height}]+bestaudio`,
-    `best[height<=${height}]`,
-    'best',
-  ].join('/');
+  const formatSelector = height
+    ? [
+        `bestvideo[height<=${height}][ext=mp4]+bestaudio[ext=m4a]`,
+        `bestvideo[height<=${height}]+bestaudio`,
+        `best[height<=${height}]`,
+        'best',
+      ].join('/')
+    : 'best';
 
   const args = buildYtdlpArgs([
     '-f', formatSelector,
@@ -134,9 +133,8 @@ async function downloadVideoAudio(id, qualityLabel) {
   return outputPath;
 }
 
-async function downloadAudioOnly(id) {
+async function downloadAudioOnly(url) {
   const prefix = join(tmpdir(), randomBytes(8).toString('hex'));
-  const url = `https://www.youtube.com/watch?v=${id}`;
 
   const args = buildYtdlpArgs([
     '-f', 'bestaudio[ext=m4a]/bestaudio',
@@ -149,12 +147,11 @@ async function downloadAudioOnly(id) {
   ]);
 
   const { stdout } = await execFileAsync(YTDLP_PATH, args, { timeout: 10 * 60_000, maxBuffer: 1024 * 1024 });
-  // --print after_move:filepath outputs the final path after any conversion/move
   const outputPath = stdout.trim().split('\n').at(-1).trim() || `${prefix}.mp3`;
   return outputPath;
 }
 
-const pendingMap = new Map(); // Map<userId, { videos: { id, title }[], thumbnailUrl, qualityLabels, audioAvailable, duration }>
+const pendingMap = new Map(); // Map<userId, { videos: { url, title }[], thumbnailUrl, qualityLabels, audioAvailable, duration }>
 const downloadCountMap = new Map(); // Map<userId, number>
 
 function getLang(ctx) {
@@ -251,28 +248,25 @@ async function processMedia(ctx, quality, type = 'video+audio', sourceMsg = null
   }
 
   while (videoList.length > 0) {
-    const { id, title } = videoList.at(-1);
+    const { url, title } = videoList.at(-1);
     let outputPath = null;
 
     try {
       if (type === 'audio') {
-        outputPath = await downloadAudioOnly(id);
+        outputPath = await downloadAudioOnly(url);
         const audioCaption = BOT_USERNAME ? `💙 @${BOT_USERNAME}` : undefined;
         await ctx.replyWithAudio(
           new InputFile(createReadStream(outputPath), 'audio.mp3'),
           { title, caption: audioCaption }
         );
       } else {
-        outputPath = await downloadVideoAudio(id, quality);
-        const caption = [
-          `⭐ <b>${title}</b>`,
-          `🔗 https://youtu.be/${id}`,
-          `📥 ${quality}`,
-          ...(BOT_USERNAME ? [`💙 @${BOT_USERNAME}`] : []),
-        ].join('\n');
+        outputPath = await downloadVideoAudio(url, quality);
+        const captionLines = [`⭐ <b>${title}</b>`];
+        if (quality) captionLines.push(`📥 ${quality}`);
+        if (BOT_USERNAME) captionLines.push(`💙 @${BOT_USERNAME}`);
         await ctx.replyWithVideo(
           new InputFile(createReadStream(outputPath), 'video.mp4'),
-          { caption, parse_mode: 'HTML' }
+          { caption: captionLines.join('\n'), parse_mode: 'HTML' }
         );
       }
     } catch (error) {
@@ -320,13 +314,18 @@ function buildQualityKeyboard(lang, qualityLabels, audioAvailable, showAll = fal
   const extraLabels = qualityLabels.filter((l) => !mainSet.has(l));
   const toShow = (showAll || mainLabels.length === 0) ? qualityLabels : mainLabels;
 
-  toShow.forEach((label, i) => {
-    if (i > 0 && i % 4 === 0) keyboard.row();
-    keyboard.text(`🎬 ${label}`, `dl:${label}`);
-  });
+  if (toShow.length === 0) {
+    // No quality info available (e.g. some platforms) — offer a single download button
+    keyboard.text(`🎬 ${translations[lang].quality_select.options.best}`, 'dl:best');
+  } else {
+    toShow.forEach((label, i) => {
+      if (i > 0 && i % 4 === 0) keyboard.row();
+      keyboard.text(`🎬 ${label}`, `dl:${label}`);
+    });
 
-  if (!showAll && mainLabels.length > 0 && extraLabels.length > 0) {
-    keyboard.row().text(translations[lang].quality_select.options.other, 'dl:more');
+    if (!showAll && mainLabels.length > 0 && extraLabels.length > 0) {
+      keyboard.row().text(translations[lang].quality_select.options.other, 'dl:more');
+    }
   }
 
   if (audioAvailable) {
@@ -356,7 +355,7 @@ bot.callbackQuery(/^dl:/, async (ctx) => {
   if (value === 'audio') {
     processMedia(ctx, 'best', 'audio', sourceMsg).catch(console.error);
   } else {
-    processMedia(ctx, value, 'video+audio', sourceMsg).catch(console.error);
+    processMedia(ctx, value === 'best' ? null : value, 'video+audio', sourceMsg).catch(console.error);
   }
 });
 
@@ -414,6 +413,13 @@ bot.on('message', async (ctx) => {
   }
 
   try {
+    new URL(url); // validate URL syntax
+  } catch {
+    await ctx.reply(translations[lang].errors.invalid_url);
+    return;
+  }
+
+  try {
     let videos = [];
     let qualityLabels = [];
     let audioAvailable = false;
@@ -426,12 +432,15 @@ bot.on('message', async (ctx) => {
 
       for (const entry of (playlist.entries ?? [])) {
         if (entry.id) {
-          videos.push({ id: entry.id, title: entry.title ?? entry.id });
+          videos.push({
+            url: `https://www.youtube.com/watch?v=${entry.id}`,
+            title: entry.title ?? entry.id,
+          });
         }
       }
 
       if (videos.length > 0) {
-        const info = await getVideoInfo(videos[0].id);
+        const info = await getVideoInfo(videos[0].url);
         qualityLabels = getQualityLabels(info);
         audioAvailable = hasAudioTrack(info);
         thumbnailUrl = getBestThumbnailUrl(info);
@@ -439,14 +448,17 @@ bot.on('message', async (ctx) => {
 
       caption = `📋 <b>${playlist.title ?? 'Playlist'}</b>`;
     } else {
-      const videoId = extractVideoId(url);
-      const info = await getVideoInfo(videoId);
+      const info = await getVideoInfo(url);
       const title = info.title ?? url;
       duration = info.duration ?? null;
       qualityLabels = getQualityLabels(info);
       audioAvailable = hasAudioTrack(info);
       thumbnailUrl = getBestThumbnailUrl(info);
-      videos.push({ id: videoId, title });
+      // Normalise YouTube URLs to canonical form; keep other URLs as-is
+      const canonicalUrl = isYouTubeUrl(url)
+        ? `https://www.youtube.com/watch?v=${extractVideoId(url)}`
+        : url;
+      videos.push({ url: canonicalUrl, title });
       caption = `⭐ <b>${title}</b>`;
     }
 
@@ -463,12 +475,8 @@ bot.on('message', async (ctx) => {
     }
   } catch (error) {
     console.error(error);
-    if (error.message?.startsWith('Invalid URL') || error.code === 'ERR_INVALID_URL') {
-      await ctx.reply(translations[lang].errors.invalid_url);
-    } else {
-      const brief = (error.message ?? '').split('\n')[0].slice(0, 200);
-      await ctx.reply(`${translations[lang].status.error} (${brief})`);
-    }
+    const brief = (error.message ?? '').split('\n')[0].slice(0, 200);
+    await ctx.reply(`${translations[lang].status.error} (${brief})`);
   }
 });
 
@@ -493,7 +501,7 @@ if (process.env.NODE_ENV === 'production') {
 
   const PORT = process.env.PORT || 3000;
 
-  app.get('/health', (req, res) => {
+  app.get('/health', (_req, res) => {
     res.send('Bot is running');
   });
 

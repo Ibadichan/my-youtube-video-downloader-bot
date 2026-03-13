@@ -1,7 +1,17 @@
+export function isYouTubeUrl(url) {
+  try {
+    const { hostname } = new URL(url);
+    return ['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be'].includes(hostname);
+  } catch {
+    return false;
+  }
+}
+
 export function isYouTubePlaylist(url) {
   try {
     const parsedUrl = new URL(url);
     return (
+      isYouTubeUrl(url) &&
       parsedUrl.searchParams.has("list") &&
       parsedUrl.pathname.includes("playlist")
     );
