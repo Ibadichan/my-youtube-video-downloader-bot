@@ -1,14 +1,12 @@
 import 'dotenv/config';
 
-import { createWriteStream, createReadStream } from 'fs';
+import { createReadStream, existsSync } from 'fs';
 import { unlink } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { randomBytes } from 'crypto';
-import { pipeline } from 'stream/promises';
 import { execFile, execSync } from 'child_process';
 import { promisify } from 'util';
-import { Innertube, Platform, UniversalCache, Utils } from 'youtubei.js';
 import { Bot, InputFile, InlineKeyboard, webhookCallback } from 'grammy';
 import express from 'express';
 import { rateLimit } from 'express-rate-limit';
@@ -17,71 +15,21 @@ import { isYouTubePlaylist, extractVideoId } from './utils.js';
 
 const execFileAsync = promisify(execFile);
 
+const YTDLP_PATH = (() => {
+  try { return execSync('which yt-dlp').toString().trim(); } catch { return 'yt-dlp'; }
+})();
+console.log('yt-dlp path:', YTDLP_PATH);
+
 const FFMPEG_PATH = (() => {
   try { return execSync('which ffmpeg').toString().trim(); } catch { return 'ffmpeg'; }
 })();
 console.log('ffmpeg path:', FFMPEG_PATH);
 
-async function writeStreamToFile(stream, filePath) {
-  await pipeline(Utils.streamToIterable(stream), createWriteStream(filePath));
-}
-
-async function mergeVideoAudio(videoStream, audioStream) {
-  const prefix = join(tmpdir(), randomBytes(8).toString('hex'));
-  const videoPath = `${prefix}_v.mp4`;
-  const audioPath = `${prefix}_a.mp4`;
-  const outputPath = `${prefix}_out.mp4`;
-
-  try {
-    await Promise.all([
-      writeStreamToFile(videoStream, videoPath),
-      writeStreamToFile(audioStream, audioPath),
-    ]);
-
-    await execFileAsync(FFMPEG_PATH, [
-      '-i', videoPath,
-      '-i', audioPath,
-      '-c:v', 'copy',
-      '-c:a', 'aac',
-      '-movflags', 'faststart',
-      outputPath,
-    ]);
-
-    return outputPath;
-  } finally {
-    await Promise.all([
-      unlink(videoPath).catch(() => {}),
-      unlink(audioPath).catch(() => {}),
-    ]);
-  }
-}
-
-Platform.shim.eval = (data, env) => {
-  const properties = [];
-
-  if (env.n) {
-    properties.push(`n: exportedVars.nFunction("${env.n}")`);
-  }
-
-  if (env.sig) {
-    properties.push(`sig: exportedVars.sigFunction("${env.sig}")`);
-  }
-
-  const code = `${data.output}\nreturn { ${properties.join(', ')} }`;
-
-  try {
-    return new Function(code)();
-  } catch (e) {
-    console.error('[shim.eval] decipher failed:', e.message);
-    throw e;
-  }
-};
-
 const {
   TELEGRAM_TOKEN,
   TELEGRAM_WEBHOOK_URL,
   TELEGRAM_API_URL,
-  YOUTUBE_COOKIE,
+  PROXY_URL,
   DONATE_CARD,
   DONATE_PEREVODILKA,
   BOT_USERNAME,
@@ -98,13 +46,115 @@ const WALLETS = {
   USDT_TRC20: 'TQze9DixKds37maVgmnuVENnUDT7UynaRy',
 };
 
-const innertube = await Innertube.create({
-  cookie: YOUTUBE_COOKIE,
-  cache: new UniversalCache(false),
-});
-console.log('Innertube initialized');
+const COOKIES_FILE = process.env.COOKIES_FILE ?? 'cookies.txt';
 
-const pendingMap = new Map(); // Map<userId, { videos: { id, title }[], thumbnailUrl: string|null }>
+function buildYtdlpArgs(extraArgs = []) {
+  const args = ['--no-check-certificates'];
+  if (FFMPEG_PATH && FFMPEG_PATH !== 'ffmpeg') {
+    args.push('--ffmpeg-location', FFMPEG_PATH);
+  }
+  // if (existsSync(COOKIES_FILE)) {
+  //   args.push('--cookies', COOKIES_FILE);
+  // }
+  // if (PROXY_URL) {
+  //   args.push('--proxy', PROXY_URL);
+  // }
+  return [...args, ...extraArgs];
+}
+
+async function getVideoInfo(videoId) {
+  const url = `https://www.youtube.com/watch?v=${videoId}`;
+  const args = buildYtdlpArgs(['--dump-json', '--no-playlist', url]);
+  const { stdout } = await execFileAsync(YTDLP_PATH, args, {
+    maxBuffer: 10 * 1024 * 1024,
+    timeout: 30_000,
+  });
+  return JSON.parse(stdout);
+}
+
+async function getPlaylistInfo(playlistUrl) {
+  const args = buildYtdlpArgs([
+    '--flat-playlist',
+    '--dump-single-json',
+    '--no-warnings',
+    playlistUrl,
+  ]);
+  const { stdout } = await execFileAsync(YTDLP_PATH, args, {
+    maxBuffer: 10 * 1024 * 1024,
+    timeout: 60_000,
+  });
+  return JSON.parse(stdout);
+}
+
+function getQualityLabels(info) {
+  const heights = [...new Set(
+    (info.formats ?? [])
+      .filter((f) => f.vcodec && f.vcodec !== 'none' && f.height &&
+                     (!f.dynamic_range || f.dynamic_range === 'SDR'))
+      .map((f) => f.height)
+  )];
+  return heights
+    .filter((h) => h >= 360)
+    .sort((a, b) => a - b)
+    .map((h) => `${h}p`);
+}
+
+function hasAudioTrack(info) {
+  return (info.formats ?? []).some(
+    (f) => f.acodec && f.acodec !== 'none' && (!f.vcodec || f.vcodec === 'none')
+  );
+}
+
+function getBestThumbnailUrl(info) {
+  return info.thumbnail ?? null;
+}
+
+async function downloadVideoAudio(id, qualityLabel) {
+  const height = parseInt(qualityLabel);
+  const prefix = join(tmpdir(), randomBytes(8).toString('hex'));
+  const outputPath = `${prefix}.mp4`;
+  const url = `https://www.youtube.com/watch?v=${id}`;
+
+  const formatSelector = [
+    `bestvideo[height<=${height}][ext=mp4]+bestaudio[ext=m4a]`,
+    `bestvideo[height<=${height}]+bestaudio`,
+    `best[height<=${height}]`,
+    'best',
+  ].join('/');
+
+  const args = buildYtdlpArgs([
+    '-f', formatSelector,
+    '--merge-output-format', 'mp4',
+    '-o', outputPath,
+    '--no-playlist',
+    url,
+  ]);
+
+  await execFileAsync(YTDLP_PATH, args, { timeout: 10 * 60_000, maxBuffer: 1024 * 1024 });
+  return outputPath;
+}
+
+async function downloadAudioOnly(id) {
+  const prefix = join(tmpdir(), randomBytes(8).toString('hex'));
+  const url = `https://www.youtube.com/watch?v=${id}`;
+
+  const args = buildYtdlpArgs([
+    '-f', 'bestaudio[ext=m4a]/bestaudio',
+    '-x',
+    '--audio-format', 'mp3',
+    '-o', `${prefix}.%(ext)s`,
+    '--print', 'after_move:filepath',
+    '--no-playlist',
+    url,
+  ]);
+
+  const { stdout } = await execFileAsync(YTDLP_PATH, args, { timeout: 10 * 60_000, maxBuffer: 1024 * 1024 });
+  // --print after_move:filepath outputs the final path after any conversion/move
+  const outputPath = stdout.trim().split('\n').at(-1).trim() || `${prefix}.mp3`;
+  return outputPath;
+}
+
+const pendingMap = new Map(); // Map<userId, { videos: { id, title }[], thumbnailUrl, qualityLabels, audioAvailable, duration }>
 const downloadCountMap = new Map(); // Map<userId, number>
 
 function getLang(ctx) {
@@ -176,6 +226,7 @@ async function processMedia(ctx, quality, type = 'video+audio', sourceMsg = null
     await ctx.reply(`${translations[lang].errors.video_too_long} ${maxMin} min (video: ${durationMin} min)`);
     return;
   }
+
   const size = videoList.length;
   let errorSize = 0;
   let infoMsg = null;
@@ -201,46 +252,39 @@ async function processMedia(ctx, quality, type = 'video+audio', sourceMsg = null
 
   while (videoList.length > 0) {
     const { id, title } = videoList.at(-1);
-    let videoStream, audioStream;
+    let outputPath = null;
 
     try {
       if (type === 'audio') {
-        audioStream = await downloadAudioOnly(id);
+        outputPath = await downloadAudioOnly(id);
         const audioCaption = BOT_USERNAME ? `💙 @${BOT_USERNAME}` : undefined;
-        await ctx.replyWithAudio(new InputFile(Utils.streamToIterable(audioStream), 'audio.mp3'), { title, caption: audioCaption });
+        await ctx.replyWithAudio(
+          new InputFile(createReadStream(outputPath), 'audio.mp3'),
+          { title, caption: audioCaption }
+        );
       } else {
-        const dlResult = await downloadVideoAudio(id, quality);
-        ({ videoStream, audioStream } = dlResult);
-
-        const qualityLabel = dlResult.isMuxed ? '360p (fallback)' : quality;
+        outputPath = await downloadVideoAudio(id, quality);
         const caption = [
           `⭐ <b>${title}</b>`,
           `🔗 https://youtu.be/${id}`,
-          `📥 ${qualityLabel}`,
+          `📥 ${quality}`,
           ...(BOT_USERNAME ? [`💙 @${BOT_USERNAME}`] : []),
         ].join('\n');
-
-        if (dlResult.isMuxed) {
-          // Stream directly — no disk write needed
-          await ctx.replyWithVideo(new InputFile(Utils.streamToIterable(videoStream), 'video.mp4'), { caption, parse_mode: 'HTML' });
-        } else {
-          const outputPath = await mergeVideoAudio(videoStream, audioStream);
-          try {
-            await ctx.replyWithVideo(new InputFile(createReadStream(outputPath), 'video.mp4'), { caption, parse_mode: 'HTML' });
-          } finally {
-            await unlink(outputPath).catch(() => {});
-          }
-        }
+        await ctx.replyWithVideo(
+          new InputFile(createReadStream(outputPath), 'video.mp4'),
+          { caption, parse_mode: 'HTML' }
+        );
       }
     } catch (error) {
       errorSize += 1;
       console.error(error);
-      try { await videoStream?.cancel(); } catch {}
-      try { await audioStream?.cancel(); } catch {}
+      const brief = (error.message ?? '').split('\n')[0].slice(0, 200);
       const msg = error.error_code === 413
         ? translations[lang].errors.file_too_large
-        : `${translations[lang].status.error} (${error.message})`;
+        : `${translations[lang].status.error} (${brief})`;
       await ctx.reply(msg);
+    } finally {
+      if (outputPath) await unlink(outputPath).catch(() => {});
     }
 
     videoList.pop();
@@ -261,101 +305,14 @@ async function processMedia(ctx, quality, type = 'video+audio', sourceMsg = null
   downloadCountMap.set(userId, newCount);
 
   if (Math.floor(newCount / 5) > Math.floor(prevCount / 5)) {
-    await ctx.reply(buildDonateText(lang), { parse_mode: 'HTML' });
+    await ctx.reply(translations[lang].donate.appeal, { reply_markup: buildDonateKeyboard(lang) });
   }
-}
-
-function getBestThumbnailUrl(thumbnails) {
-  const jpegs = (thumbnails ?? []).filter((t) => !t.url?.includes('.webp'));
-  if (!jpegs.length) return null;
-  return jpegs.reduce((best, t) => ((t.width ?? 0) > (best.width ?? 0) ? t : best)).url;
-}
-
-function getQualityLabels(streamingData) {
-  const labels = [...new Set(
-    (streamingData?.adaptive_formats ?? [])
-      .filter((f) => f.mime_type?.startsWith('video/'))
-      .map((f) => f.quality_label)
-      .filter(Boolean)
-  )];
-  return labels
-    .filter((l) => parseInt(l) >= 360 && !l.toUpperCase().includes('HDR'))
-    .sort((a, b) => parseInt(a) - parseInt(b));
-}
-
-function hasAudioTrack(streamingData) {
-  return (streamingData?.adaptive_formats ?? []).some(
-    (f) => f.mime_type?.startsWith('audio/')
-  );
-}
-
-// Tries WEB_EMBEDDED first (avoids login-required), falls back to WEB (for non-embeddable videos)
-async function getVideoInfoSafe(videoId) {
-  const [webResult, embeddedResult] = await Promise.allSettled([
-    innertube.getBasicInfo(videoId),
-    innertube.getBasicInfo(videoId, 'WEB_EMBEDDED'),
-  ]);
-  const web = webResult.status === 'fulfilled' ? webResult.value : null;
-  const embedded = embeddedResult.status === 'fulfilled' ? embeddedResult.value : null;
-  if (!web && !embedded) {
-    console.error(`getBasicInfo failed for ${videoId} — WEB: ${webResult.reason?.message} | WEB_EMBEDDED: ${embeddedResult.reason?.message}`);
-    throw webResult.reason;
-  }
-  return { web: web ?? embedded, embedded: embedded ?? web };
-}
-
-const DOWNLOAD_CLIENTS = ['WEB_EMBEDDED', 'WEB', 'MWEB', 'TV_EMBEDDED'];
-
-async function downloadVideoAudio(id, quality) {
-  let lastError;
-  for (const client of DOWNLOAD_CLIENTS) {
-    let videoStream;
-    try {
-      videoStream = await innertube.download(id, { type: 'video', quality, client });
-      const audioStream = await innertube.download(id, { type: 'audio', quality: 'best', client });
-      console.log(`[${client}] adaptive OK: ${id} (${quality})`);
-      return { videoStream, audioStream };
-    } catch (e) {
-      try { await videoStream?.cancel(); } catch {}
-      lastError = e;
-      console.warn(`[${client}] adaptive failed for ${id} (${quality}): ${e.message}`);
-    }
-  }
-  // Muxed fallback: pre-merged stream (usually ≤360p), may bypass decipher issues
-  for (const client of DOWNLOAD_CLIENTS) {
-    try {
-      const stream = await innertube.download(id, { type: 'video+audio', client });
-      console.log(`[${client}] muxed fallback OK: ${id}`);
-      return { videoStream: stream, isMuxed: true };
-    } catch (e) {
-      console.warn(`[${client}] muxed fallback failed for ${id}: ${e.message}`);
-    }
-  }
-  console.error(`All clients failed for ${id} (${quality}): ${lastError?.message}`);
-  throw lastError;
-}
-
-async function downloadAudioOnly(id) {
-  let lastError;
-  for (const client of DOWNLOAD_CLIENTS) {
-    try {
-      const stream = await innertube.download(id, { type: 'audio', quality: 'best', client });
-      console.log(`[${client}] audio OK: ${id}`);
-      return stream;
-    } catch (e) {
-      lastError = e;
-      console.warn(`[${client}] audio failed for ${id}: ${e.message}`);
-    }
-  }
-  console.error(`All clients failed for audio ${id}: ${lastError?.message}`);
-  throw lastError;
 }
 
 const MAIN_RESOLUTIONS = [360, 480, 720, 1080];
 
 function buildQualityKeyboard(lang, qualityLabels, audioAvailable, showAll = false) {
   const keyboard = new InlineKeyboard();
-  // For each main resolution pick the first matching label (e.g. "1080p60" if "1080p" is absent)
   const mainLabels = MAIN_RESOLUTIONS
     .map((res) => qualityLabels.find((l) => parseInt(l) === res))
     .filter(Boolean);
@@ -465,32 +422,30 @@ bot.on('message', async (ctx) => {
     let duration = null;
 
     if (isYouTubePlaylist(url)) {
-      const playlistId = new URL(url).searchParams.get('list');
-      const playlist = await innertube.getPlaylist(playlistId);
+      const playlist = await getPlaylistInfo(url);
 
-      for (const video of playlist.items) {
-        if (video.type === 'PlaylistVideo') {
-          videos.push({ id: video.id, title: video.title.toString() });
+      for (const entry of (playlist.entries ?? [])) {
+        if (entry.id) {
+          videos.push({ id: entry.id, title: entry.title ?? entry.id });
         }
       }
 
       if (videos.length > 0) {
-        const { web: info, embedded: audioInfo } = await getVideoInfoSafe(videos[0].id);
-        qualityLabels = getQualityLabels(audioInfo.streaming_data);
-        audioAvailable = hasAudioTrack(audioInfo.streaming_data);
-        thumbnailUrl = getBestThumbnailUrl(info.basic_info.thumbnail);
+        const info = await getVideoInfo(videos[0].id);
+        qualityLabels = getQualityLabels(info);
+        audioAvailable = hasAudioTrack(info);
+        thumbnailUrl = getBestThumbnailUrl(info);
       }
 
-      caption = `📋 <b>${playlist.info.title}</b>`;
+      caption = `📋 <b>${playlist.title ?? 'Playlist'}</b>`;
     } else {
       const videoId = extractVideoId(url);
-      const { web: info, embedded: audioInfo } = await getVideoInfoSafe(videoId);
-      const title = info.basic_info.title ?? url;
-      duration = info.basic_info.duration ?? null;
-
-      qualityLabels = getQualityLabels(audioInfo.streaming_data);
-      audioAvailable = hasAudioTrack(audioInfo.streaming_data);
-      thumbnailUrl = getBestThumbnailUrl(info.basic_info.thumbnail);
+      const info = await getVideoInfo(videoId);
+      const title = info.title ?? url;
+      duration = info.duration ?? null;
+      qualityLabels = getQualityLabels(info);
+      audioAvailable = hasAudioTrack(info);
+      thumbnailUrl = getBestThumbnailUrl(info);
       videos.push({ id: videoId, title });
       caption = `⭐ <b>${title}</b>`;
     }
@@ -508,10 +463,11 @@ bot.on('message', async (ctx) => {
     }
   } catch (error) {
     console.error(error);
-    if (error.message === 'Invalid URL') {
+    if (error.message?.startsWith('Invalid URL') || error.code === 'ERR_INVALID_URL') {
       await ctx.reply(translations[lang].errors.invalid_url);
     } else {
-      await ctx.reply(`${translations[lang].status.error} (${error.message})`);
+      const brief = (error.message ?? '').split('\n')[0].slice(0, 200);
+      await ctx.reply(`${translations[lang].status.error} (${brief})`);
     }
   }
 });

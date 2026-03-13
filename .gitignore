@@ -74,6 +74,9 @@ web_modules/
 
 # dotenv environment variable files
 .env
+
+# YouTube cookies file (Netscape format, export from browser)
+cookies.txt
 .env.development.local
 .env.test.local
 .env.production.local

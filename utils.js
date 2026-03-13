@@ -18,7 +18,7 @@ export function extractVideoId(url) {
   }
 
   if (parsedUrl.pathname.startsWith('/shorts/')) {
-    return parsedUrl.pathname.split('/shorts/')[1];
+    return parsedUrl.pathname.split('/shorts/')[1].split('/')[0];
   }
 
   return parsedUrl.searchParams.get('v');
